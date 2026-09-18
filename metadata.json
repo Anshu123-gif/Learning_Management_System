@@ -1,0 +1,6 @@
+{
+  "name": "CodeHub LMS",
+  "description": "Full-stack Physics Wallah & Udemy style Learning Management System with gated authentication, role-based access control, video lectures, quizzes, auto-graded exams, verified certificates, payment flow, and Gemini AI course tutor.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

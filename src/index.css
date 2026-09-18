@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+@layer utilities {
+  .font-display {
+    font-family: 'Syne', sans-serif;
+  }
+  .font-mono-tech {
+    font-family: 'Space Grotesk', monospace;
+  }
+}
+
+/* Sheryians Dark Grid Background */
+.sheryians-grid {
+  background-image: 
+    linear-gradient(to right, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 64px 64px;
+}
+
+.sheryians-radial-glow {
+  background: radial-gradient(circle at 50% 35%, rgba(232, 74, 39, 0.16) 0%, rgba(200, 50, 20, 0.05) 45%, transparent 75%);
+}

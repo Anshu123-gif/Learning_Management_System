@@ -1,0 +1,65 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile in Sheryians LMS",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier of the user",
+          "maxLength": 128
+        },
+        "name": {
+          "type": "string",
+          "description": "Full name of the user",
+          "maxLength": 100
+        },
+        "email": {
+          "type": "string",
+          "description": "Email address of the user",
+          "maxLength": 120
+        },
+        "phone": {
+          "type": "string",
+          "description": "10-digit mobile number",
+          "maxLength": 20
+        },
+        "role": {
+          "type": "string",
+          "description": "User role: student, teacher, or admin",
+          "enum": ["student", "teacher", "admin"]
+        },
+        "avatar": {
+          "type": "string",
+          "description": "Avatar image URL",
+          "maxLength": 500
+        },
+        "bio": {
+          "type": "string",
+          "description": "Short bio",
+          "maxLength": 500
+        },
+        "enrolledCourses": {
+          "type": "array",
+          "description": "List of enrolled course IDs"
+        },
+        "wishlist": {
+          "type": "array",
+          "description": "List of wishlisted course IDs"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of creation"
+        }
+      },
+      "required": ["id", "name", "email", "role"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User accounts and profiles stored by user ID"
+    }
+  }
+}
