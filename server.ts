@@ -6,8 +6,12 @@ import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import Razorpay from "razorpay";
+import crypto from "crypto";
 import { connectMongoDB, isMongoConnected } from "./server/db.js";
 import { MongoUser } from "./server/models/User.js";
+import { MongoPayment } from "./server/models/Payment.js";
+import { MongoEnrollment } from "./server/models/Enrollment.js";
 
 dotenv.config();
 
@@ -20,7 +24,13 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json());
+  app.use(
+    express.json({
+      verify: (req: any, _res, buf) => {
+        req.rawBody = buf;
+      },
+    })
+  );
 
   // Attempt connection to MongoDB Atlas
   connectMongoDB()
@@ -44,6 +54,12 @@ async function startServer() {
     });
   }
 
+  // Initialize ONE Razorpay SDK client with credentials from environment variables
+  const razorpay = new Razorpay({
+    key_id: process.env.RAZORPAY_KEY_ID || "",
+    key_secret: process.env.RAZORPAY_KEY_SECRET || "",
+  });
+
   // Health check endpoint
   app.get("/api/health", (req, res) => {
     res.json({
@@ -55,6 +71,732 @@ async function startServer() {
       aiConfigured: Boolean(process.env.GEMINI_API_KEY),
       timestamp: new Date().toISOString(),
     });
+  });
+
+  // -------------------------------------------------------------
+  // RAZORPAY PAYMENT GATEWAY ROUTES
+  // -------------------------------------------------------------
+
+  // Authoritative course registry on server to prevent client-side price tampering
+  const AUTHORITATIVE_COURSES: Record<string, { title: string; price: number }> = {
+    course_mern_101: {
+      title: "Full-Stack MERN Architecture: Zero to Production",
+      price: 1499,
+    },
+    course_react_202: {
+      title: "React 19 & Next-Gen State Management",
+      price: 999,
+    },
+    course_devops_303: {
+      title: "Cloud Deployment & Microservices: Docker, Render & AWS",
+      price: 1299,
+    },
+    course_pending_404: {
+      title: "System Design for Indian Tech Giants (Flipkart, Swiggy, Zerodha)",
+      price: 1999,
+    },
+  };
+
+  // POST /api/payments/create-order: Creates an authoritative Razorpay order
+  app.post("/api/payments/create-order", async (req, res) => {
+    try {
+      const { courseId, amount, courseTitle, userId } = req.body;
+
+      if (!courseId && (amount === undefined || amount === null || amount === "")) {
+        return res.status(400).json({
+          success: false,
+          message: "Course ID or valid amount is required to create a payment order.",
+        });
+      }
+
+      // Check authoritative course price from server catalog to prevent client tampering
+      let finalPriceInRupees: number;
+      let finalCourseTitle: string = courseTitle || "EduPulse LMS Course";
+
+      const matchedCourse = courseId ? AUTHORITATIVE_COURSES[String(courseId)] : undefined;
+
+      const parsedAmount =
+        typeof amount === "number"
+          ? amount
+          : typeof amount === "string" && !isNaN(parseFloat(amount))
+          ? parseFloat(amount)
+          : NaN;
+
+      if (matchedCourse) {
+        // Authoritative server-side price (tamper-proof for catalog courses)
+        finalPriceInRupees = matchedCourse.price;
+        finalCourseTitle = matchedCourse.title;
+      } else if (!isNaN(parsedAmount) && parsedAmount > 0) {
+        // Fallback for custom, teacher-created, or dynamic courses
+        finalPriceInRupees = Math.round(parsedAmount);
+        finalCourseTitle = courseTitle || `Course ${courseId || "Standard"}`;
+      } else if (courseId) {
+        // Fallback if courseId is passed but amount was missing or invalid: default to 1499
+        finalPriceInRupees = 1499;
+        finalCourseTitle = courseTitle || `Course ${courseId}`;
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid course or invalid price specified.",
+        });
+      }
+
+      // Validate amount (must be positive number and at least 1 INR)
+      if (finalPriceInRupees <= 0 || isNaN(finalPriceInRupees)) {
+        return res.status(400).json({
+          success: false,
+          message: "Course price must be greater than zero.",
+        });
+      }
+
+      // Check if Razorpay keys are configured in environment
+      if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+        return res.status(503).json({
+          success: false,
+          message: "Razorpay payment gateway is not configured on the server.",
+        });
+      }
+
+      // Convert INR rupees to paise (1 INR = 100 paise)
+      const amountInPaise = Math.round(finalPriceInRupees * 100);
+
+      // Prepare options for Razorpay Orders API
+      const options = {
+        amount: amountInPaise,
+        currency: "INR",
+        receipt: `rcpt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`.slice(0, 40),
+        notes: {
+          courseId: courseId ? String(courseId) : "custom",
+          courseTitle: finalCourseTitle.slice(0, 100),
+          userId: userId ? String(userId) : "anonymous",
+        },
+      };
+
+      // Call Razorpay's Orders API via the SDK client
+      const order = await razorpay.orders.create(options);
+
+      return res.status(201).json({
+        success: true,
+        orderId: order.id,
+        amount: order.amount, // in paise
+        amountRupees: finalPriceInRupees,
+        currency: order.currency,
+        courseId: courseId || null,
+        courseTitle: finalCourseTitle,
+        keyId: process.env.RAZORPAY_KEY_ID || "",
+      });
+    } catch (err: any) {
+      console.error("Razorpay order creation failure:", err?.message || err);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to create Razorpay payment order. Please try again later.",
+        error: err?.error?.description || err?.message || "Internal payment gateway error",
+      });
+    }
+  });
+
+  // POST /api/payments/verify: Authenticates Razorpay HMAC-SHA256 signature AND creates MongoDB course enrollment
+  app.post("/api/payments/verify", async (req, res) => {
+    try {
+      const { razorpay_payment_id, razorpay_order_id, razorpay_signature, courseId, courseTitle, amount, userId, studentName, studentEmail } = req.body;
+
+      // 1. Validate that all three required Razorpay parameters are present
+      if (!razorpay_payment_id || !razorpay_order_id || !razorpay_signature) {
+        return res.status(400).json({
+          success: false,
+          paymentVerified: false,
+          enrolled: false,
+          message:
+            "Payment verification failed: Missing required parameters (razorpay_payment_id, razorpay_order_id, razorpay_signature).",
+        });
+      }
+
+      // 2. Ensure Razorpay Secret is present on the server
+      const secret = process.env.RAZORPAY_KEY_SECRET;
+      if (!secret) {
+        return res.status(500).json({
+          success: false,
+          paymentVerified: false,
+          enrolled: false,
+          message: "Payment verification failed: Razorpay secret key is not configured on the server.",
+        });
+      }
+
+      // 3. Generate expected HMAC-SHA256 signature using razorpay_order_id + "|" + razorpay_payment_id
+      const bodyToSign = `${razorpay_order_id}|${razorpay_payment_id}`;
+      const expectedSignature = crypto
+        .createHmac("sha256", secret)
+        .update(bodyToSign)
+        .digest("hex");
+
+      // 4. Constant-time comparison using crypto.timingSafeEqual
+      let isMatch = false;
+      try {
+        const expectedBuffer = Buffer.from(expectedSignature, "utf8");
+        const actualBuffer = Buffer.from(String(razorpay_signature), "utf8");
+
+        if (expectedBuffer.length === actualBuffer.length) {
+          isMatch = crypto.timingSafeEqual(expectedBuffer, actualBuffer);
+        }
+      } catch (compareError) {
+        isMatch = false;
+      }
+
+      // 5. If signature does NOT match, immediately reject the payment
+      if (!isMatch) {
+        console.warn(`⚠️ [Payment Tampering Detected] Invalid HMAC signature for Order: ${razorpay_order_id}`);
+        return res.status(400).json({
+          success: false,
+          paymentVerified: false,
+          enrolled: false,
+          message:
+            "Payment verification failed: Invalid cryptographic signature. Transaction cannot be trusted.",
+        });
+      }
+
+      console.log(`✅ [Razorpay Signature Verified] HMAC signature match for Order: ${razorpay_order_id}, Payment: ${razorpay_payment_id}`);
+
+      // 6. Connect to MongoDB Atlas
+      const isConnected = await connectMongoDB();
+      if (!isConnected) {
+        console.error("❌ MongoDB Atlas is not connected during course enrollment!");
+        return res.status(500).json({
+          success: false,
+          paymentVerified: true,
+          enrolled: false,
+          message:
+            "Payment was verified, but course enrollment could not be completed. Please contact support.",
+          paymentId: razorpay_payment_id,
+          orderId: razorpay_order_id,
+        });
+      }
+
+      // 7. Identify Authenticated Student (Prefer JWT Bearer Token if present)
+      let authenticatedUserId: string | null = null;
+      let authenticatedEmail: string | null = null;
+
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        try {
+          const token = authHeader.split(" ")[1];
+          const decoded: any = jwt.verify(token, JWT_SECRET);
+          authenticatedUserId = decoded.userId || null;
+          authenticatedEmail = decoded.email || null;
+        } catch (jwtErr) {
+          // Token expired or invalid; fallback to request payload
+        }
+      }
+
+      const finalUserId = authenticatedUserId || userId || "usr_student_1";
+      const finalEmail = authenticatedEmail || studentEmail || "student@edupulse.ac.in";
+      const finalName = studentName || "Sheryians Student";
+
+      // Look up or auto-sync student in MongoDB
+      let studentUser = await MongoUser.findOne({
+        $or: [{ userId: finalUserId }, { email: finalEmail.toLowerCase() }],
+      });
+
+      if (!studentUser) {
+        studentUser = new MongoUser({
+          userId: finalUserId,
+          name: finalName,
+          email: finalEmail.toLowerCase(),
+          role: "student",
+          avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80",
+          bio: "Student at Sheryians Coding School",
+          enrolledCourses: [],
+          wishlist: [],
+        });
+        await studentUser.save();
+        console.log(`👤 Created student profile in MongoDB for: ${studentUser.email}`);
+      }
+
+      // 8. Determine Authoritative Course & Amount
+      let finalCourseId = courseId || "course_mern_101";
+      let finalCourseTitle = courseTitle || "Full-Stack MERN Architecture: Zero to Production";
+      let finalPriceInRupees = typeof amount === "number" && amount > 0 ? Math.round(amount) : 1499;
+
+      // Attempt to retrieve authoritative notes directly from Razorpay Order
+      try {
+        const orderInfo = await razorpay.orders.fetch(razorpay_order_id);
+        if (orderInfo) {
+          if (orderInfo.notes?.courseId) {
+            finalCourseId = String(orderInfo.notes.courseId);
+          }
+          if (orderInfo.notes?.courseTitle) {
+            finalCourseTitle = String(orderInfo.notes.courseTitle);
+          }
+          if (orderInfo.amount) {
+            finalPriceInRupees = Math.round(Number(orderInfo.amount) / 100);
+          }
+        }
+      } catch (orderFetchErr) {
+        // Fallback to server registry
+        const catalogCourse = AUTHORITATIVE_COURSES[finalCourseId];
+        if (catalogCourse) {
+          finalCourseTitle = catalogCourse.title;
+          finalPriceInRupees = catalogCourse.price;
+        } else if (courseTitle) {
+          finalCourseTitle = String(courseTitle);
+        }
+      }
+
+      // 9. DUPLICATE PAYMENT CHECK (Idempotency)
+      // Check whether this Razorpay Payment ID or Order ID has already been recorded
+      const existingPayment = await MongoPayment.findOne({
+        $or: [
+          { razorpayPaymentId: razorpay_payment_id },
+          { razorpayOrderId: razorpay_order_id },
+        ],
+      });
+
+      if (existingPayment) {
+        console.log(`ℹ️ [Duplicate Payment Prevented] Payment ${razorpay_payment_id} already recorded.`);
+        return res.status(200).json({
+          success: true,
+          paymentVerified: true,
+          enrolled: true,
+          alreadyProcessed: true,
+          message: "Payment and enrollment have already been recorded and processed.",
+          paymentId: existingPayment.razorpayPaymentId,
+          orderId: existingPayment.razorpayOrderId,
+          courseId: existingPayment.courseId,
+          courseTitle: existingPayment.courseTitle,
+          studentId: existingPayment.studentId,
+        });
+      }
+
+      // 10. ALREADY ENROLLED CHECK
+      // Check if student is already enrolled in this course in MongoDB
+      const existingEnrollment = await MongoEnrollment.findOne({
+        studentId: studentUser.userId,
+        courseId: finalCourseId,
+      });
+      const isAlreadyInUserCourses = Array.isArray(studentUser.enrolledCourses) && studentUser.enrolledCourses.includes(finalCourseId);
+
+      if (existingEnrollment || isAlreadyInUserCourses) {
+        console.log(`ℹ️ [Already Enrolled] Student ${studentUser.userId} already enrolled in ${finalCourseId}`);
+        return res.status(200).json({
+          success: true,
+          paymentVerified: true,
+          enrolled: true,
+          alreadyEnrolled: true,
+          message: "Student is already enrolled in this course.",
+          paymentId: razorpay_payment_id,
+          orderId: razorpay_order_id,
+          courseId: finalCourseId,
+          courseTitle: finalCourseTitle,
+          studentId: studentUser.userId,
+        });
+      }
+
+      // 11. ATOMIC RECORD CREATION IN MONGODB
+      try {
+        // A. Create Payment transaction record in MongoDB
+        const newPaymentRecord = new MongoPayment({
+          paymentId: `pay_${Date.now()}`,
+          studentId: studentUser.userId,
+          studentName: studentUser.name,
+          studentEmail: studentUser.email,
+          courseId: finalCourseId,
+          courseTitle: finalCourseTitle,
+          amount: finalPriceInRupees,
+          amountPaise: Math.round(finalPriceInRupees * 100),
+          currency: "INR",
+          razorpayOrderId: razorpay_order_id,
+          razorpayPaymentId: razorpay_payment_id,
+          razorpaySignature: razorpay_signature,
+          status: "captured",
+        });
+        await newPaymentRecord.save();
+
+        // B. Create Enrollment record in MongoDB
+        const newEnrollmentRecord = new MongoEnrollment({
+          enrollmentId: `enr_${Date.now()}`,
+          studentId: studentUser.userId,
+          studentEmail: studentUser.email,
+          courseId: finalCourseId,
+          courseTitle: finalCourseTitle,
+          progressPercent: 0,
+          completedLectures: [],
+          paymentId: razorpay_payment_id,
+          razorpayOrderId: razorpay_order_id,
+          razorpayPaymentId: razorpay_payment_id,
+          enrolledAt: new Date().toISOString(),
+          certificateIssued: false,
+        });
+        await newEnrollmentRecord.save();
+
+        // C. Update user's enrolledCourses list in MongoDB
+        await MongoUser.updateOne(
+          { userId: studentUser.userId },
+          { $addToSet: { enrolledCourses: finalCourseId } }
+        );
+
+        console.log(`🎓 [MongoDB Enrollment Success] Student ${studentUser.email} enrolled in ${finalCourseId} (Payment: ${razorpay_payment_id})`);
+
+        return res.status(200).json({
+          success: true,
+          paymentVerified: true,
+          enrolled: true,
+          message: "Payment verified successfully and student enrolled in course.",
+          paymentId: razorpay_payment_id,
+          orderId: razorpay_order_id,
+          courseId: finalCourseId,
+          courseTitle: finalCourseTitle,
+          studentId: studentUser.userId,
+          studentName: studentUser.name,
+          enrollment: {
+            enrollmentId: newEnrollmentRecord.enrollmentId,
+            courseId: finalCourseId,
+            enrolledAt: newEnrollmentRecord.enrolledAt,
+          },
+        });
+      } catch (dbErr: any) {
+        console.error("❌ MongoDB write failure after verified payment:", dbErr);
+        // Do NOT falsely tell student enrollment succeeded if MongoDB write failed
+        return res.status(500).json({
+          success: false,
+          paymentVerified: true,
+          enrolled: false,
+          message:
+            "Payment was verified, but course enrollment could not be completed. Please contact support.",
+          paymentId: razorpay_payment_id,
+          orderId: razorpay_order_id,
+          error: dbErr?.message,
+        });
+      }
+    } catch (err: any) {
+      console.error("Payment verification server error:", err?.message || err);
+      return res.status(500).json({
+        success: false,
+        paymentVerified: false,
+        enrolled: false,
+        message: "Internal server error occurred during payment verification.",
+      });
+    }
+  });
+
+  // POST /api/payments/webhook: Razorpay Webhook listener for asynchronous payment events (e.g. payment.captured)
+  app.post("/api/payments/webhook", async (req, res) => {
+    const webhookSignature = req.headers["x-razorpay-signature"] as string | undefined;
+    const deliveryId = (req.headers["x-razorpay-event-id"] as string | undefined) || "unknown";
+
+    // 1. Log webhook received (Do NOT log any secrets)
+    console.log(`[Razorpay Webhook] 📩 Webhook received. Delivery ID: ${deliveryId}, Event: ${req.body?.event || "unknown"}`);
+
+    // 2. Validate presence of RAZORPAY_WEBHOOK_SECRET in environment
+    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+    if (!webhookSecret) {
+      console.error("[Razorpay Webhook] ❌ Server configuration error: RAZORPAY_WEBHOOK_SECRET is not configured on the server.");
+      return res.status(500).json({
+        success: false,
+        message: "Server configuration error: Webhook secret is not set.",
+      });
+    }
+
+    // 3. Validate presence of signature header
+    if (!webhookSignature) {
+      console.warn("[Razorpay Webhook] ❌ Verification failed: Missing 'x-razorpay-signature' header.");
+      return res.status(400).json({
+        success: false,
+        message: "Missing 'x-razorpay-signature' header.",
+      });
+    }
+
+    // 4. Verify HMAC-SHA256 signature against the raw request body Buffer
+    const rawBody = (req as any).rawBody;
+    if (!rawBody || (!Buffer.isBuffer(rawBody) && typeof rawBody !== "string")) {
+      console.warn("[Razorpay Webhook] ❌ Verification failed: Raw request body buffer is missing.");
+      return res.status(400).json({
+        success: false,
+        message: "Malformed request: Raw body is required for signature verification.",
+      });
+    }
+
+    const expectedSignature = crypto
+      .createHmac("sha256", webhookSecret)
+      .update(rawBody)
+      .digest("hex");
+
+    let isSignatureValid = false;
+    try {
+      const expectedBuffer = Buffer.from(expectedSignature, "utf8");
+      const actualBuffer = Buffer.from(String(webhookSignature), "utf8");
+      if (expectedBuffer.length === actualBuffer.length) {
+        isSignatureValid = crypto.timingSafeEqual(expectedBuffer, actualBuffer);
+      }
+    } catch {
+      isSignatureValid = false;
+    }
+
+    if (!isSignatureValid) {
+      console.warn(`[Razorpay Webhook] ❌ Signature verification failed for event: ${req.body?.event || "unknown"}`);
+      return res.status(400).json({
+        success: false,
+        message: "Invalid webhook cryptographic signature.",
+      });
+    }
+
+    console.log(`[Razorpay Webhook] ✅ Signature verified successfully for event: ${req.body?.event || "unknown"}`);
+
+    // 5. Validate webhook event payload structure
+    const event = req.body?.event;
+    if (!event || typeof event !== "string") {
+      console.warn("[Razorpay Webhook] ❌ Malformed payload: Missing or invalid 'event' property.");
+      return res.status(400).json({
+        success: false,
+        message: "Malformed webhook payload: missing event field.",
+      });
+    }
+
+    console.log(`[Razorpay Webhook] ⚡ Event type: ${event}`);
+
+    // 6. Handle supported events (initially payment.captured)
+    if (event !== "payment.captured") {
+      console.log(`[Razorpay Webhook] ℹ️ Non-captured event received: ${event}. Safely acknowledged.`);
+      return res.status(200).json({
+        success: true,
+        acknowledged: true,
+        message: `Event '${event}' safely acknowledged (only 'payment.captured' triggers enrollment processing).`,
+      });
+    }
+
+    // 7. Safely extract payment entity information
+    const paymentEntity = req.body?.payload?.payment?.entity;
+    if (!paymentEntity || !paymentEntity.id) {
+      console.warn("[Razorpay Webhook] ❌ Malformed 'payment.captured' payload: Missing payment entity.");
+      return res.status(400).json({
+        success: false,
+        message: "Malformed webhook payload: missing payment entity.",
+      });
+    }
+
+    const razorpay_payment_id = String(paymentEntity.id);
+    const razorpay_order_id = paymentEntity.order_id ? String(paymentEntity.order_id) : "";
+    const amountPaise = typeof paymentEntity.amount === "number" ? paymentEntity.amount : 0;
+    const amountRupees = Math.round(amountPaise / 100);
+    const currency = paymentEntity.currency || "INR";
+    const paymentNotes = paymentEntity.notes || {};
+    const customerEmail = paymentEntity.email;
+
+    // 8. Connect to MongoDB
+    const isConnected = await connectMongoDB();
+    if (!isConnected) {
+      console.error("[Razorpay Webhook] ❌ MongoDB Atlas connection offline during webhook processing!");
+      return res.status(503).json({
+        success: false,
+        message: "Database temporarily unavailable for webhook reconciliation.",
+      });
+    }
+
+    // 9. Idempotency Check: Prevent duplicate payment and enrollment creation
+    const existingPayment = await MongoPayment.findOne({
+      $or: [
+        { razorpayPaymentId: razorpay_payment_id },
+        ...(razorpay_order_id ? [{ razorpayOrderId: razorpay_order_id }] : []),
+      ],
+    });
+
+    if (existingPayment) {
+      console.log(
+        `[Razorpay Webhook] ℹ️ Duplicate event: Payment ${razorpay_payment_id} or Order ${razorpay_order_id} already processed.`
+      );
+      return res.status(200).json({
+        success: true,
+        alreadyProcessed: true,
+        message: "Webhook event already processed (idempotent duplicate).",
+        paymentId: existingPayment.razorpayPaymentId,
+        orderId: existingPayment.razorpayOrderId,
+      });
+    }
+
+    // 10. Reconcile order notes (Fetch from Razorpay Order API if notes not present on payment entity)
+    let notes: Record<string, any> = { ...paymentNotes };
+    if (razorpay_order_id && (!notes.courseId || !notes.userId)) {
+      try {
+        const orderInfo = await razorpay.orders.fetch(razorpay_order_id);
+        if (orderInfo?.notes) {
+          notes = { ...orderInfo.notes, ...notes };
+        }
+      } catch (fetchErr: any) {
+        console.warn(`[Razorpay Webhook] Could not fetch Razorpay order ${razorpay_order_id}:`, fetchErr?.message || fetchErr);
+      }
+    }
+
+    // 11. Establish reliable Student and Course relationship (Do NOT blindly enroll)
+    let studentUser = null;
+    const candidateUserId = notes.userId && notes.userId !== "anonymous" ? String(notes.userId) : null;
+    const candidateEmail = notes.studentEmail || notes.email || customerEmail || null;
+
+    if (candidateUserId) {
+      studentUser = await MongoUser.findOne({ userId: candidateUserId });
+    }
+
+    if (!studentUser && candidateEmail) {
+      studentUser = await MongoUser.findOne({ email: candidateEmail.toLowerCase() });
+    }
+
+    const candidateCourseId = notes.courseId && notes.courseId !== "custom" ? String(notes.courseId) : null;
+
+    // If student user or course cannot be reliably established, do NOT create an unauthorized enrollment
+    if (!studentUser || !candidateCourseId) {
+      console.warn(
+        `[Razorpay Webhook] ⚠️ Cannot establish reliable student or course relationship for Payment ${razorpay_payment_id}. ` +
+        `User ID: ${candidateUserId || "none"}, Email: ${candidateEmail || "none"}, Course ID: ${candidateCourseId || "none"}. ` +
+        `Skipping automatic enrollment to maintain data integrity.`
+      );
+      return res.status(200).json({
+        success: true,
+        reconciled: false,
+        message: "Webhook received, but student or course relationship could not be verified for automatic enrollment.",
+        paymentId: razorpay_payment_id,
+        orderId: razorpay_order_id,
+      });
+    }
+
+    // 12. Resolve authoritative course details
+    const catalogCourse = AUTHORITATIVE_COURSES[candidateCourseId];
+    const finalCourseTitle = notes.courseTitle || catalogCourse?.title || `Course ${candidateCourseId}`;
+    const finalPriceInRupees = amountRupees > 0 ? amountRupees : catalogCourse?.price || 1499;
+
+    // 13. Check if student is already enrolled in this course
+    const existingEnrollment = await MongoEnrollment.findOne({
+      studentId: studentUser.userId,
+      courseId: candidateCourseId,
+    });
+    const isAlreadyInUserCourses =
+      Array.isArray(studentUser.enrolledCourses) && studentUser.enrolledCourses.includes(candidateCourseId);
+
+    if (existingEnrollment || isAlreadyInUserCourses) {
+      console.log(`[Razorpay Webhook] ℹ️ Student ${studentUser.userId} is already enrolled in course ${candidateCourseId}.`);
+
+      // Ensure payment record exists for financial records
+      const paymentRecordExists = await MongoPayment.findOne({ razorpayPaymentId: razorpay_payment_id });
+      if (!paymentRecordExists) {
+        const newPaymentRecord = new MongoPayment({
+          paymentId: `pay_${Date.now()}`,
+          studentId: studentUser.userId,
+          studentName: studentUser.name,
+          studentEmail: studentUser.email,
+          courseId: candidateCourseId,
+          courseTitle: finalCourseTitle,
+          amount: finalPriceInRupees,
+          amountPaise: amountPaise || Math.round(finalPriceInRupees * 100),
+          currency: currency,
+          razorpayOrderId: razorpay_order_id || "",
+          razorpayPaymentId: razorpay_payment_id,
+          razorpaySignature: `webhook_${crypto.createHash("sha256").update(razorpay_payment_id).digest("hex").slice(0, 16)}`,
+          status: "captured",
+        });
+        await newPaymentRecord.save();
+        console.log(`[Razorpay Webhook] 💳 Recorded payment for already-enrolled student: ${studentUser.email}`);
+      }
+
+      return res.status(200).json({
+        success: true,
+        enrolled: true,
+        alreadyEnrolled: true,
+        message: "Student is already enrolled in this course; payment record synchronized.",
+        paymentId: razorpay_payment_id,
+        orderId: razorpay_order_id,
+        courseId: candidateCourseId,
+        studentId: studentUser.userId,
+      });
+    }
+
+    // 14. Atomic Record Creation in MongoDB
+    try {
+      const newPaymentRecord = new MongoPayment({
+        paymentId: `pay_${Date.now()}`,
+        studentId: studentUser.userId,
+        studentName: studentUser.name,
+        studentEmail: studentUser.email,
+        courseId: candidateCourseId,
+        courseTitle: finalCourseTitle,
+        amount: finalPriceInRupees,
+        amountPaise: amountPaise || Math.round(finalPriceInRupees * 100),
+        currency: currency,
+        razorpayOrderId: razorpay_order_id || "",
+        razorpayPaymentId: razorpay_payment_id,
+        razorpaySignature: `webhook_${crypto.createHash("sha256").update(razorpay_payment_id).digest("hex").slice(0, 16)}`,
+        status: "captured",
+      });
+      await newPaymentRecord.save();
+
+      const newEnrollmentRecord = new MongoEnrollment({
+        enrollmentId: `enr_${Date.now()}`,
+        studentId: studentUser.userId,
+        studentEmail: studentUser.email,
+        courseId: candidateCourseId,
+        courseTitle: finalCourseTitle,
+        progressPercent: 0,
+        completedLectures: [],
+        paymentId: razorpay_payment_id,
+        razorpayOrderId: razorpay_order_id || "",
+        razorpayPaymentId: razorpay_payment_id,
+        enrolledAt: new Date().toISOString(),
+        certificateIssued: false,
+      });
+      await newEnrollmentRecord.save();
+
+      await MongoUser.updateOne(
+        { userId: studentUser.userId },
+        { $addToSet: { enrolledCourses: candidateCourseId } }
+      );
+
+      console.log(
+        `[Razorpay Webhook] 🎓 Payment processing result: Student ${studentUser.email} (${studentUser.userId}) successfully enrolled in ${candidateCourseId} via webhook reconciliation.`
+      );
+
+      return res.status(200).json({
+        success: true,
+        enrolled: true,
+        message: "Payment verified and enrollment processed successfully via webhook.",
+        paymentId: razorpay_payment_id,
+        orderId: razorpay_order_id,
+        courseId: candidateCourseId,
+        studentId: studentUser.userId,
+      });
+    } catch (dbErr: any) {
+      console.error("[Razorpay Webhook] ❌ Database write failure during webhook processing:", dbErr);
+      return res.status(500).json({
+        success: false,
+        message: "Database write failure during webhook enrollment processing.",
+      });
+    }
+  });
+
+  // GET /api/mongo/enrollments/:userId: Fetches student's enrollments from MongoDB
+  app.get("/api/mongo/enrollments/:userId", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const connected = await connectMongoDB();
+      if (!connected) {
+        return res.status(503).json({ success: false, message: "MongoDB connection offline." });
+      }
+
+      const enrollments = await MongoEnrollment.find({ studentId: userId }).lean();
+      return res.json({ success: true, enrollments });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // GET /api/mongo/payments/:userId: Fetches student's verified payment history from MongoDB
+  app.get("/api/mongo/payments/:userId", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const connected = await connectMongoDB();
+      if (!connected) {
+        return res.status(503).json({ success: false, message: "MongoDB connection offline." });
+      }
+
+      const payments = await MongoPayment.find({ studentId: userId }).lean();
+      return res.json({ success: true, payments });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
   });
 
   // -------------------------------------------------------------

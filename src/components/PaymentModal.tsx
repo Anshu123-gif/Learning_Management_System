@@ -8,8 +8,14 @@ import {
   CheckCircle2,
   Lock,
   Zap,
+  AlertCircle,
 } from "lucide-react";
-import { Course } from "../types";
+import {
+  Course,
+  RazorpayOptions,
+  RazorpayPaymentSuccessResponse,
+  RazorpayPaymentFailureResponse,
+} from "../types";
 import { useAuth } from "../context/AuthContext";
 import { useLms } from "../context/LmsContext";
 
@@ -18,6 +24,30 @@ interface PaymentModalProps {
   onClose: () => void;
   onSuccess: () => void;
 }
+
+// Dynamically load official Razorpay Checkout SDK
+const loadRazorpayScript = (): Promise<boolean> => {
+  return new Promise((resolve) => {
+    if (typeof window !== "undefined" && window.Razorpay) {
+      resolve(true);
+      return;
+    }
+    const existingScript = document.querySelector(
+      'script[src="https://checkout.razorpay.com/v1/checkout.js"]'
+    );
+    if (existingScript) {
+      existingScript.addEventListener("load", () => resolve(true));
+      existingScript.addEventListener("error", () => resolve(false));
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.async = true;
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+};
 
 export const PaymentModal: React.FC<PaymentModalProps> = ({
   course,
@@ -28,31 +58,203 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const { enrollInCourse } = useLms();
 
   const [paymentMethod, setPaymentMethod] = useState<"upi" | "card" | "netbanking">("upi");
-  const [upiId, setUpiId] = useState(`${currentUser.name.toLowerCase().replace(/\s+/g, "")}@okaxis`);
+  const [upiId, setUpiId] = useState(`${currentUser?.name?.toLowerCase().replace(/\s+/g, "") || "student"}@okaxis`);
   const [cardNumber, setCardNumber] = useState("4532 •••• •••• 8910");
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isSuccess, setIsSuccess] = useState(false);
-  const [orderId] = useState(() => `order_${Math.random().toString(36).substring(2, 12).toUpperCase()}`);
-  const [paymentId, setPaymentId] = useState("");
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [isVerified, setIsVerified] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [paymentResponseData, setPaymentResponseData] = useState<RazorpayPaymentSuccessResponse | null>(null);
+  const [enrollmentResult, setEnrollmentResult] = useState<{
+    enrollmentId?: string;
+    alreadyEnrolled?: boolean;
+    alreadyProcessed?: boolean;
+    studentName?: string;
+  } | null>(null);
 
   const handlePay = async () => {
+    if (isProcessing || isVerifying) return;
+
     setIsProcessing(true);
+    setIsVerifying(false);
+    setIsVerified(false);
+    setErrorMessage(null);
 
-    // Simulate API call to /api/payments/verify-signature with Razorpay SDK
-    setTimeout(() => {
-      const generatedPayId = `pay_${Math.random().toString(36).substring(2, 12).toUpperCase()}`;
-      setPaymentId(generatedPayId);
+    try {
+      // 1. Ensure Razorpay Checkout script is loaded
+      const isScriptLoaded = await loadRazorpayScript();
+      if (!isScriptLoaded || !window.Razorpay) {
+        throw new Error(
+          "Could not load Razorpay Checkout SDK. Please check your internet connection and try again."
+        );
+      }
 
-      // Perform enrollment
-      enrollInCourse(course._id, {
-        razorpayOrderId: orderId,
-        razorpayPaymentId: generatedPayId,
-        amount: course.price,
+      // Safe fallback variables for course information
+      const safeCourseId = course?._id ? String(course._id) : "course_mern_101";
+      const rawPrice = course?.price ?? (course as any)?.amount;
+      const safePrice =
+        typeof rawPrice === "number" && !isNaN(rawPrice) && rawPrice > 0
+          ? Math.round(rawPrice)
+          : typeof rawPrice === "string" && !isNaN(parseFloat(rawPrice)) && parseFloat(rawPrice) > 0
+          ? Math.round(parseFloat(rawPrice))
+          : typeof course?.originalPrice === "number" && course.originalPrice > 0
+          ? Math.round(course.originalPrice)
+          : 1499;
+      const safeCourseTitle = course?.title || "EduPulse LMS Course";
+
+      // 2. Call backend order creation API (Authoritative Server-Side Amount)
+      const res = await fetch("/api/payments/create-order", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          courseId: safeCourseId,
+          amount: safePrice,
+          courseTitle: safeCourseTitle,
+          userId: currentUser?._id,
+        }),
       });
 
+      const orderData = await res.json();
+
+      if (!res.ok || !orderData.success || !orderData.orderId) {
+        throw new Error(
+          orderData.message || orderData.error || "Failed to initiate payment order on the server."
+        );
+      }
+
+      // 3. Prepare Razorpay Checkout options with public Test Key ID
+      const options: RazorpayOptions = {
+        key: orderData.keyId,
+        amount: orderData.amount, // in paise from backend
+        currency: orderData.currency || "INR",
+        name: "EduPulse Technologies",
+        description: orderData.courseTitle || safeCourseTitle,
+        order_id: orderData.orderId,
+        handler: async (response: RazorpayPaymentSuccessResponse) => {
+          // Razorpay popup finished; now verify the HMAC signature and enroll in MongoDB on backend
+          setIsVerifying(true);
+          setIsProcessing(true);
+          setErrorMessage(null);
+
+          try {
+            const jwtToken = localStorage.getItem("edupulse_jwt_token");
+
+            const verifyRes = await fetch("/api/payments/verify", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(jwtToken ? { Authorization: `Bearer ${jwtToken}` } : {}),
+              },
+              body: JSON.stringify({
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_signature: response.razorpay_signature,
+                courseId: safeCourseId,
+                courseTitle: safeCourseTitle,
+                amount: safePrice,
+                userId: currentUser?._id,
+                studentName: currentUser?.name,
+                studentEmail: currentUser?.email,
+              }),
+            });
+
+            const verifyData = await verifyRes.json();
+
+            // Check if backend rejected verification or enrollment failed
+            if (!verifyRes.ok) {
+              if (verifyData.paymentVerified && !verifyData.enrolled) {
+                throw new Error(
+                  verifyData.message ||
+                    "Payment was verified, but course enrollment could not be completed. Please contact support."
+                );
+              }
+              throw new Error(
+                verifyData.message ||
+                  "Payment verification failed. Please contact support if money was deducted."
+              );
+            }
+
+            if (!verifyData.success || !verifyData.enrolled) {
+              throw new Error(
+                verifyData.message ||
+                  "Payment was verified, but course enrollment could not be completed. Please contact support."
+              );
+            }
+
+            // Cryptographic signature verified AND MongoDB course enrollment confirmed by backend!
+            setIsVerifying(false);
+            setIsProcessing(false);
+            setIsVerified(true);
+            setPaymentResponseData(response);
+            setEnrollmentResult({
+              enrollmentId: verifyData.enrollment?.enrollmentId,
+              alreadyEnrolled: verifyData.alreadyEnrolled,
+              alreadyProcessed: verifyData.alreadyProcessed,
+              studentName: verifyData.studentName || currentUser?.name,
+            });
+
+            // Update client-side LMS context state now that backend confirmed enrollment in MongoDB
+            enrollInCourse(safeCourseId, {
+              razorpayOrderId: response.razorpay_order_id,
+              razorpayPaymentId: response.razorpay_payment_id,
+              amount: safePrice,
+            });
+          } catch (verifyErr: any) {
+            console.error("Backend signature verification and enrollment failed:", verifyErr);
+            setIsVerifying(false);
+            setIsProcessing(false);
+            setIsVerified(false);
+            setErrorMessage(
+              verifyErr.message ||
+                "Payment was verified, but course enrollment could not be completed. Please contact support."
+            );
+          }
+        },
+        prefill: {
+          name: currentUser?.name || "Student",
+          email: currentUser?.email || "student@edupulse.in",
+          contact: currentUser?.phone || "9876543210",
+        },
+        notes: {
+          courseId: safeCourseId,
+          courseTitle: safeCourseTitle,
+          amount: String(safePrice),
+          userId: currentUser?._id || "",
+        },
+        theme: {
+          color: "#2563eb",
+        },
+        modal: {
+          ondismiss: () => {
+            setIsProcessing(false);
+            setIsVerifying(false);
+            setErrorMessage("Payment checkout window was closed before completion.");
+          },
+        },
+      };
+
+      // 4. Open Razorpay Checkout modal
+      const rzp = new window.Razorpay(options);
+
+      rzp.on("payment.failed", (failResponse: RazorpayPaymentFailureResponse) => {
+        setIsProcessing(false);
+        setIsVerifying(false);
+        setErrorMessage(
+          failResponse.error?.description || "Payment failed or was declined by the bank."
+        );
+      });
+
+      rzp.open();
+    } catch (err: any) {
+      console.error("Razorpay checkout launch error:", err);
       setIsProcessing(false);
-      setIsSuccess(true);
-    }, 1500);
+      setIsVerifying(false);
+      setErrorMessage(
+        err.message || "An unexpected error occurred while launching Razorpay Checkout."
+      );
+    }
   };
 
   return (
@@ -66,7 +268,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             </div>
             <div>
               <div className="text-xs font-semibold text-blue-200">
-                Razorpay Secure Checkout
+                Razorpay Secure Checkout (Test Mode)
               </div>
               <div className="text-sm font-bold tracking-tight">
                 EduPulse Technologies Ltd.
@@ -85,8 +287,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         <div className="bg-blue-50/60 border-b border-blue-100 p-4 flex items-center justify-between text-xs">
           <div>
             <div className="font-bold text-slate-800 line-clamp-1">{course.title}</div>
-            <div className="text-slate-500 font-mono text-[10px]">
-              Order ID: {orderId}
+            <div className="text-slate-500 text-[10px]">
+              Course ID: {course._id}
             </div>
           </div>
           <div className="text-right shrink-0">
@@ -101,7 +303,17 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
         {/* Body */}
         <div className="p-5 space-y-4">
-          {!isSuccess ? (
+          {errorMessage && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2 text-xs text-amber-800">
+              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold">Notice: </span>
+                {errorMessage}
+              </div>
+            </div>
+          )}
+
+          {!paymentResponseData ? (
             <>
               {/* Payment Methods Tabs */}
               <div className="space-y-1.5">
@@ -166,7 +378,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                     </div>
                   </div>
                   <div className="space-y-1 pt-1">
-                    <label className="text-[11px] text-slate-500">Or Enter UPI VPA ID</label>
+                    <label className="text-[11px] text-slate-500">Student UPI VPA</label>
                     <input
                       type="text"
                       value={upiId}
@@ -224,64 +436,110 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               {/* Pay Button */}
               <button
                 onClick={handlePay}
-                disabled={isProcessing}
-                className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-bold rounded-xl text-sm transition-all shadow-md shadow-blue-600/30 flex items-center justify-center gap-2"
+                disabled={isProcessing || isVerifying}
+                className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-bold rounded-xl text-sm transition-all shadow-md shadow-blue-600/30 flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
               >
-                {isProcessing ? (
+                {isVerifying ? (
                   <>
                     <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    <span>Verifying HMAC Signature...</span>
+                    <span>Verifying HMAC Signature with Backend...</span>
+                  </>
+                ) : isProcessing ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>Opening Razorpay Checkout...</span>
                   </>
                 ) : (
                   <>
                     <Lock className="w-4 h-4" />
-                    <span>Pay ₹{course.price.toLocaleString()} Securely</span>
+                    <span>Pay ₹{course.price.toLocaleString()} with Razorpay</span>
                   </>
                 )}
               </button>
 
               <div className="flex items-center justify-center gap-2 text-[10px] text-slate-400">
                 <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
-                <span>256-bit TLS Encryption • PCI-DSS Compliant</span>
+                <span>256-bit TLS Encryption • Backend Signature Verification</span>
               </div>
             </>
           ) : (
-            /* Payment Success Screen */
-            <div className="text-center py-4 space-y-4">
+            /* Razorpay Payment Verified & MongoDB Enrollment Complete (Step 7 Complete) */
+            <div className="text-center py-2 space-y-3.5">
               <div className="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full mx-auto flex items-center justify-center shadow-lg shadow-emerald-500/20">
                 <CheckCircle2 className="w-8 h-8" />
               </div>
 
               <div className="space-y-1">
-                <h3 className="text-lg font-bold text-slate-900">Payment Successful!</h3>
+                <h3 className="text-lg font-bold text-slate-900">
+                  {enrollmentResult?.alreadyEnrolled
+                    ? "Enrollment Already Active!"
+                    : "Payment Verified & Enrolled!"}
+                </h3>
                 <p className="text-xs text-slate-500">
-                  Transaction verified via Razorpay webhook signature.
+                  {enrollmentResult?.alreadyEnrolled
+                    ? "Your course access was previously registered and is currently active."
+                    : "Payment HMAC signature verified and enrollment record saved to MongoDB Atlas."}
                 </p>
               </div>
 
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 text-xs text-left space-y-1.5 font-mono">
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 text-xs text-left space-y-2 font-mono">
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Payment ID:</span>
-                  <span className="font-bold text-slate-800">{paymentId}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Course Enrolled:</span>
+                  <span className="text-slate-500">Course:</span>
                   <span className="font-bold text-slate-800 line-clamp-1">{course.title}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Amount Paid:</span>
-                  <span className="font-bold text-emerald-600">₹{course.price}</span>
+                  <span className="text-slate-500">Amount:</span>
+                  <span className="font-bold text-emerald-600">₹{course.price.toLocaleString()}</span>
                 </div>
+
+                <div className="border-t border-slate-200 pt-2 space-y-1.5">
+                  <div className="text-[11px] text-slate-700 font-sans font-bold flex items-center justify-between">
+                    <span>Backend Signature:</span>
+                    <span className="text-emerald-700 font-bold bg-emerald-100 px-1.5 py-0.5 rounded text-[10px]">
+                      PASSED (HMAC MATCH)
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-700 font-sans font-bold flex items-center justify-between">
+                    <span>MongoDB Enrollment:</span>
+                    <span className="text-blue-700 font-bold bg-blue-100 px-1.5 py-0.5 rounded text-[10px]">
+                      CONFIRMED & ACTIVE
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-[11px]">
+                    <span className="text-slate-500">Payment ID:</span>
+                    <span className="font-bold text-blue-700">{paymentResponseData.razorpay_payment_id}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-[11px]">
+                    <span className="text-slate-500">Order ID:</span>
+                    <span className="font-bold text-slate-700">{paymentResponseData.razorpay_order_id}</span>
+                  </div>
+                  {enrollmentResult?.enrollmentId && (
+                    <div className="flex justify-between items-center text-[11px]">
+                      <span className="text-slate-500">Enrollment ID:</span>
+                      <span className="font-bold text-indigo-700">{enrollmentResult.enrollmentId}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[11px] text-emerald-900 text-left space-y-1">
+                <div className="font-bold flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>Access Granted by Backend</span>
+                </div>
+                <p className="text-emerald-700 leading-relaxed">
+                  Your course enrollment has been permanently synchronized with MongoDB. All video lectures, source code, and community discussions are unlocked.
+                </p>
               </div>
 
               <button
                 onClick={() => {
-                  onSuccess();
+                  onSuccess?.();
                   onClose();
                 }}
-                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition-colors flex items-center justify-center gap-2"
+                className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer shadow-md shadow-blue-600/20"
               >
-                <span>Go to Classroom & Start Watching</span>
+                Go to Classroom & Start Learning
               </button>
             </div>
           )}
@@ -290,3 +548,4 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     </div>
   );
 };
+
