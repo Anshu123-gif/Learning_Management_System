@@ -434,6 +434,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // --------------------------------------------------------------------------
   // 3. WEBHOOK: POST /api/payments/webhook
+  // Strictly verifies HMAC-SHA256 signature against RAZORPAY_WEBHOOK_SECRET
   // --------------------------------------------------------------------------
   if (isWebhook) {
     try {
