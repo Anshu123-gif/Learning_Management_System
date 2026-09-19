@@ -3,11 +3,11 @@
   "rewrites": [
     {
       "source": "/api/auth/:path*",
-      "destination": "/api/auth"
+      "destination": "/api/auth?path=:path*"
     },
     {
       "source": "/api/health",
-      "destination": "/api/auth"
+      "destination": "/api/auth?path=health"
     },
     {
       "source": "/(.*)",

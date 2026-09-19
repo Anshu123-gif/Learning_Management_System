@@ -485,7 +485,7 @@ async function startServer() {
     // 1. Log webhook received (Do NOT log any secrets)
     console.log(`[Razorpay Webhook] 📩 Webhook received. Delivery ID: ${deliveryId}, Event: ${req.body?.event || "unknown"}`);
 
-    // 2. Validate presence of RAZORPAY_WEBHOOK_SECRET in environment
+    // 2. Validate presence of RAZORPAY_WEBHOOK_SECRET in environment (no fallbacks or hardcoded values)
     const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
     if (!webhookSecret) {
       console.error("[Razorpay Webhook] ❌ Server configuration error: RAZORPAY_WEBHOOK_SECRET is not configured on the server.");

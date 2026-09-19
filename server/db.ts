@@ -10,7 +10,8 @@ export async function connectMongoDB() {
     return false;
   }
 
-  if (isConnected) {
+  if (isConnected || mongoose.connection.readyState >= 1) {
+    isConnected = true;
     return true;
   }
 
