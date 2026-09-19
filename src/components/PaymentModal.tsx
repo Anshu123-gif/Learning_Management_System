@@ -116,11 +116,19 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         }),
       });
 
-      const orderData = await res.json();
+      let orderData: any = {};
+      const responseText = await res.text();
+      try {
+        orderData = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        throw new Error(
+          `Payment server returned invalid response (HTTP ${res.status}). Please try again or contact support.`
+        );
+      }
 
       if (!res.ok || !orderData.success || !orderData.orderId) {
         throw new Error(
-          orderData.message || orderData.error || "Failed to initiate payment order on the server."
+          orderData.message || orderData.error || `Failed to initiate payment order on the server (HTTP ${res.status}).`
         );
       }
 
@@ -160,7 +168,15 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               }),
             });
 
-            const verifyData = await verifyRes.json();
+            let verifyData: any = {};
+            const verifyText = await verifyRes.text();
+            try {
+              verifyData = verifyText ? JSON.parse(verifyText) : {};
+            } catch {
+              throw new Error(
+                `Payment verification returned invalid server response (HTTP ${verifyRes.status}).`
+              );
+            }
 
             // Check if backend rejected verification or enrollment failed
             if (!verifyRes.ok) {

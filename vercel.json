@@ -6,6 +6,10 @@
       "destination": "/api/auth?path=:path*"
     },
     {
+      "source": "/api/payments/:path*",
+      "destination": "/api/payments?path=:path*"
+    },
+    {
       "source": "/api/health",
       "destination": "/api/auth?path=health"
     },
