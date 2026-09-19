@@ -498,14 +498,49 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // --------------------------------------------------------------------------
-  // 4. HEALTH CHECK / DEFAULT
+  // 4. HEALTH CHECK & SAFE DIAGNOSTICS (Temporary)
   // --------------------------------------------------------------------------
   if (isHealth) {
+    const rawKeyId = process.env.RAZORPAY_KEY_ID || "";
+    const rawKeySecret = process.env.RAZORPAY_KEY_SECRET || "";
+
+    const keyIdExists = Boolean(rawKeyId);
+    const keySecretExists = Boolean(rawKeySecret);
+
+    const keyIdStartsWithRzpTest = rawKeyId.startsWith("rzp_test_");
+    const keyIdLength = rawKeyId.length;
+    const keySecretLength = rawKeySecret.length;
+
+    const keyIdHasLeadingTrailingWhitespace = /^\s|\s$/.test(rawKeyId);
+    const keySecretHasLeadingTrailingWhitespace = /^\s|\s$/.test(rawKeySecret);
+    const keyIdHasQuotes = /^["'].*["']$/.test(rawKeyId);
+    const keySecretHasQuotes = /^["'].*["']$/.test(rawKeySecret);
+
+    const keyIdSha256 = keyIdExists
+      ? crypto.createHash("sha256").update(rawKeyId).digest("hex")
+      : null;
+    const keySecretSha256 = keySecretExists
+      ? crypto.createHash("sha256").update(rawKeySecret).digest("hex")
+      : null;
+
     return res.status(200).json({
       status: "online",
       service: "EduPulse Payments API (Vercel Serverless)",
-      razorpayConfigured: Boolean(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET),
+      razorpayConfigured: Boolean(keyIdExists && keySecretExists),
       timestamp: new Date().toISOString(),
+      diagnostics: {
+        keyIdExists,
+        keyIdStartsWithRzpTest,
+        keyIdLength,
+        keyIdHasLeadingTrailingWhitespace,
+        keyIdHasQuotes,
+        keySecretExists,
+        keySecretLength,
+        keySecretHasLeadingTrailingWhitespace,
+        keySecretHasQuotes,
+        keyIdSha256,
+        keySecretSha256,
+      },
     });
   }
 
