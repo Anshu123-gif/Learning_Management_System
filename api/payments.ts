@@ -6,6 +6,7 @@ import { connectMongoDB } from "../server/db.js";
 import { MongoUser } from "../server/models/User.js";
 import { MongoPayment } from "../server/models/Payment.js";
 import { MongoEnrollment } from "../server/models/Enrollment.js";
+import { sendPaymentSuccessEmails } from "../server/email.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "sheryians_lms_super_secure_jwt_secret_key_2025";
 
@@ -304,6 +305,112 @@ export async function fulfillEnrollmentAndPayment(
     { userId: studentUser.userId },
     { $addToSet: { enrolledCourses: finalCourseId } }
   );
+
+  // 10. Atomic Email Notification Deduplication, Dispatch & Safe Retry
+  // We use an atomic lock with a 2-minute staleness window so concurrent /verify + webhook cannot double-send,
+  // while transient Resend failures clear the lock or allow automatic retries on subsequent webhook deliveries.
+  // emailNotificationSent is ONLY set to true AFTER Resend successfully accepts the emails.
+  try {
+    const lockWindowMs = 2 * 60 * 1000; // 2 minutes lock expiration
+    const lockExpiryThreshold = new Date(Date.now() - lockWindowMs);
+
+    // Atomically claim the sending lock if not already sent AND (not locked OR lock expired)
+    const claimedPayment = await MongoPayment.findOneAndUpdate(
+      {
+        razorpayPaymentId,
+        emailNotificationSent: { $ne: true },
+        $or: [
+          { emailSendingLockedAt: { $exists: false } },
+          { emailSendingLockedAt: null },
+          { emailSendingLockedAt: { $lt: lockExpiryThreshold } },
+        ],
+      },
+      {
+        $set: {
+          emailSendingLockedAt: new Date(),
+        },
+      },
+      { new: true }
+    );
+
+    if (claimedPayment) {
+      const emailResult = await sendPaymentSuccessEmails({
+        studentName: studentUser.name || "Student",
+        studentEmail: studentUser.email,
+        courseTitle: finalCourseTitle,
+        courseId: finalCourseId,
+        amountRupees: finalPriceInRupees,
+        currency: currency || "INR",
+        razorpayPaymentId,
+        razorpayOrderId: razorpayOrderId || "",
+        fulfillmentSource: source,
+      });
+
+      // Check if Resend successfully accepted the email(s)
+      // Note: If student has a valid email, studentEmailSent MUST be true.
+      const hasStudentEmail = Boolean(studentUser.email && studentUser.email.includes("@"));
+      const isStudentSuccess = hasStudentEmail ? emailResult.studentEmailSent : true;
+      const isOverallSuccess = isStudentSuccess && !emailResult.studentError;
+
+      if (isOverallSuccess) {
+        // ONLY mark emailNotificationSent = true when Resend has accepted the email
+        await MongoPayment.updateOne(
+          { razorpayPaymentId },
+          {
+            $set: {
+              emailNotificationSent: true,
+              emailSentAt: new Date(),
+              emailSendError: null,
+            },
+            $unset: {
+              emailSendingLockedAt: 1,
+            },
+          }
+        );
+        console.log(
+          `[Fulfillment (${source})] ✅ Email notification successfully sent and confirmed in DB for ${razorpayPaymentId}`
+        );
+      } else {
+        // Resend failed or returned an error: clear the lock immediately and record error so retries can try again
+        const errorMsg = emailResult.studentError || emailResult.adminError || "Resend email send failed";
+        await MongoPayment.updateOne(
+          { razorpayPaymentId },
+          {
+            $set: {
+              emailSendError: errorMsg,
+            },
+            $unset: {
+              emailSendingLockedAt: 1, // Unlock immediately for subsequent webhook retries
+            },
+          }
+        );
+        console.warn(
+          `[Fulfillment (${source})] ⚠️ Resend dispatch failed for ${razorpayPaymentId}: "${errorMsg}". Lock released for retry.`
+        );
+      }
+    } else {
+      console.log(
+        `[Fulfillment (${source})] ℹ️ Email notification already sent, currently in-flight, or claimed for ${razorpayPaymentId}. Skipping duplicate dispatch.`
+      );
+    }
+  } catch (emailErr: any) {
+    console.error(
+      `[Fulfillment (${source})] ⚠️ Non-blocking email error for ${razorpayPaymentId}:`,
+      emailErr?.message || emailErr
+    );
+    // On unexpected error, attempt to release lock to preserve retryability
+    try {
+      await MongoPayment.updateOne(
+        { razorpayPaymentId, emailNotificationSent: { $ne: true } },
+        {
+          $set: { emailSendError: emailErr?.message || String(emailErr) },
+          $unset: { emailSendingLockedAt: 1 },
+        }
+      );
+    } catch {
+      // ignore secondary error
+    }
+  }
 
   const wasAlreadyProcessed = Boolean(existingPayment && existingEnrollment);
 

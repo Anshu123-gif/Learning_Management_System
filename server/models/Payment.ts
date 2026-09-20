@@ -14,6 +14,10 @@ export interface IPayment {
   razorpayPaymentId: string;
   razorpaySignature: string;
   status: "captured" | "failed" | "refunded";
+  emailNotificationSent?: boolean;
+  emailSentAt?: Date;
+  emailSendingLockedAt?: Date;
+  emailSendError?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -35,6 +39,10 @@ const PaymentSchema = new Schema<IPaymentDocument>(
     razorpayPaymentId: { type: String, required: true, unique: true, index: true },
     razorpaySignature: { type: String, required: true },
     status: { type: String, enum: ["captured", "failed", "refunded"], default: "captured" },
+    emailNotificationSent: { type: Boolean, default: false },
+    emailSentAt: { type: Date },
+    emailSendingLockedAt: { type: Date },
+    emailSendError: { type: String },
   },
   {
     timestamps: true,
