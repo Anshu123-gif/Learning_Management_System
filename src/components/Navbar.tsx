@@ -144,8 +144,8 @@ export const Navbar: React.FC<NavbarProps> = ({
               Offline Programs
             </button>
 
-            {/* Student "My Learning" if authenticated */}
-            {isAuthenticated && (
+            {/* Student "My Learning" only for students */}
+            {isAuthenticated && (!activeRole || activeRole === "student") && (
               <button
                 onClick={() => handleTabChange("my-learning")}
                 className={`px-3 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
