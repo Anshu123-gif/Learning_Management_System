@@ -162,9 +162,13 @@ export const Navbar: React.FC<NavbarProps> = ({
             {isAuthenticated && activeRole === "teacher" && (
               <button
                 onClick={() => handleTabChange("instructor")}
-                className="px-3 py-2 rounded-lg text-xs font-semibold text-neutral-400 hover:text-white"
+                className={`px-3 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  activeTab === "instructor" || activeTab === "teacher"
+                    ? "bg-indigo-600 text-white"
+                    : "text-neutral-400 hover:text-white"
+                }`}
               >
-                Studio
+                Teacher Studio
               </button>
             )}
 
@@ -172,7 +176,11 @@ export const Navbar: React.FC<NavbarProps> = ({
             {isAuthenticated && activeRole === "admin" && (
               <button
                 onClick={() => handleTabChange("admin")}
-                className="px-3 py-2 rounded-lg text-xs font-semibold text-neutral-400 hover:text-white"
+                className={`px-3 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  activeTab === "admin"
+                    ? "bg-amber-600 text-white"
+                    : "text-neutral-400 hover:text-white"
+                }`}
               >
                 Admin
               </button>
@@ -238,6 +246,32 @@ export const Navbar: React.FC<NavbarProps> = ({
                           {activeRole}
                         </span>
                       </div>
+
+                      {activeRole === "teacher" && (
+                        <button
+                          onClick={() => {
+                            setRoleDropdownOpen(false);
+                            handleTabChange("instructor");
+                          }}
+                          className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-indigo-400 hover:bg-neutral-800 transition-colors flex items-center justify-between cursor-pointer"
+                        >
+                          <span>Teacher Studio</span>
+                          <span className="text-[10px] bg-indigo-950/80 text-indigo-300 border border-indigo-800/60 px-1.5 py-0.5 rounded">Go</span>
+                        </button>
+                      )}
+
+                      {activeRole === "admin" && (
+                        <button
+                          onClick={() => {
+                            setRoleDropdownOpen(false);
+                            handleTabChange("admin");
+                          }}
+                          className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold text-amber-400 hover:bg-neutral-800 transition-colors flex items-center justify-between cursor-pointer"
+                        >
+                          <span>Admin Control Panel</span>
+                          <span className="text-[10px] bg-amber-950/80 text-amber-300 border border-amber-800/60 px-1.5 py-0.5 rounded">Go</span>
+                        </button>
+                      )}
                     </div>
 
                     <div className="pt-2 mt-1 border-t border-neutral-800 px-1.5">

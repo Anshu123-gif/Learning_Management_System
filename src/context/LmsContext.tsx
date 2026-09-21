@@ -35,9 +35,9 @@ interface LmsContextType {
   // Course actions
   getCourseById: (courseId: string) => Course | undefined;
   approveCourse: (courseId: string) => void;
-  rejectCourse: (courseId: string, reason: string) => void;
-  createCourse: (newCourse: Partial<Course>) => void;
-  addCourse: (newCourse: Partial<Course>) => void;
+  rejectCourse: (courseId: string, reason?: string) => void;
+  createCourse: (newCourse: Partial<Course>) => Promise<{ success: boolean; course?: Course; message?: string }>;
+  addCourse: (newCourse: Partial<Course>) => Promise<{ success: boolean; course?: Course; message?: string }>;
   addSectionToCourse: (courseId: string, title: string) => Section;
   addLectureToSection: (courseId: string, sectionId: string, lectureData: Partial<Lecture>) => Lecture;
   
@@ -189,7 +189,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
-  const rejectCourse = (courseId: string, reason: string) => {
+  const rejectCourse = (courseId: string, reason: string = "Course content requires revisions.") => {
     setCourses((prev) =>
       prev.map((c) =>
         c._id === courseId
@@ -234,14 +234,16 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (data.success && data.course) {
           const createdMongoCourse: Course = data.course;
           setCourses((prev) => [createdMongoCourse, ...prev.filter((c) => c._id !== createdMongoCourse._id)]);
-          return;
+          return { success: true, course: createdMongoCourse, message: data.message };
         }
       } else {
         const errorData = await res.json().catch(() => ({}));
         console.warn("MongoDB course creation returned error:", errorData.message);
+        return { success: false, message: errorData.message || "Failed to create course in MongoDB." };
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn("Network error during /api/courses POST:", err);
+      return { success: false, message: err.message || "Network error while connecting to server." };
     }
 
     // 2. Fallback local state creation if offline or demo mode
@@ -291,6 +293,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setCourses((prev) => [course, ...prev]);
+    return { success: true, course, message: "Course created locally." };
   };
 
   const addCourse = createCourse;

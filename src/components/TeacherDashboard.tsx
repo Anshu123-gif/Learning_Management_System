@@ -70,9 +70,17 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   // New Course Form
   const [newCourseTitle, setNewCourseTitle] = useState("");
   const [newCourseSubtitle, setNewCourseSubtitle] = useState("");
+  const [newCourseDescription, setNewCourseDescription] = useState("");
   const [newCourseCategory, setNewCourseCategory] = useState("Web Development");
   const [newCoursePrice, setNewCoursePrice] = useState("3499");
   const [newCourseLevel, setNewCourseLevel] = useState<"Beginner" | "Intermediate" | "Advanced">("Beginner");
+  const [newCourseThumbnail, setNewCourseThumbnail] = useState("https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=800&auto=format&fit=crop&q=60");
+  const [newCourseLanguage, setNewCourseLanguage] = useState("English");
+  const [newCourseRequirements, setNewCourseRequirements] = useState("Basic programming fundamentals");
+  const [newCourseLearningOutcomes, setNewCourseLearningOutcomes] = useState("Build production web applications\nImplement secure APIs and database operations");
+  const [isSubmittingCourse, setIsSubmittingCourse] = useState(false);
+  const [createCourseError, setCreateCourseError] = useState("");
+  const [createCourseSuccess, setCreateCourseSuccess] = useState("");
 
   // New Lecture Form
   const [selectedSectionId, setSelectedSectionId] = useState("");
@@ -82,34 +90,57 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const [isUploadingToS3, setIsUploadingToS3] = useState(false);
   const [s3UploadSuccess, setS3UploadSuccess] = useState(false);
 
-  const handleCreateCourse = (e: React.FormEvent) => {
+  const handleCreateCourse = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCourseTitle.trim()) return;
 
-    addCourse({
-      title: newCourseTitle,
-      subtitle: newCourseSubtitle || "Master real-world production engineering concepts.",
-      description: "Comprehensive industry curriculum with hands-on labs and certifications.",
+    setIsSubmittingCourse(true);
+    setCreateCourseError("");
+    setCreateCourseSuccess("");
+
+    const reqList = newCourseRequirements
+      .split("\n")
+      .map((r) => r.trim())
+      .filter((r) => r.length > 0);
+    const outcomesList = newCourseLearningOutcomes
+      .split("\n")
+      .map((o) => o.trim())
+      .filter((o) => o.length > 0);
+
+    const priceNum = parseInt(newCoursePrice) || 3499;
+
+    const res = await addCourse({
+      title: newCourseTitle.trim(),
+      subtitle: newCourseSubtitle.trim() || "Master real-world production engineering concepts.",
+      description: newCourseDescription.trim() || "Comprehensive industry curriculum with hands-on labs and certifications.",
       category: newCourseCategory,
       level: newCourseLevel,
-      price: parseInt(newCoursePrice) || 3499,
-      originalPrice: (parseInt(newCoursePrice) || 3499) * 2,
-      thumbnail: "https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=800&auto=format&fit=crop&q=60",
+      price: priceNum,
+      originalPrice: priceNum * 2,
+      thumbnail: newCourseThumbnail.trim() || "https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=800&auto=format&fit=crop&q=60",
+      language: newCourseLanguage.trim() || "English",
+      requirements: reqList.length > 0 ? reqList : ["Basic programming fundamentals"],
+      learningOutcomes: outcomesList.length > 0 ? outcomesList : ["Build end-to-end applications"],
       instructorId: currentUser._id,
       instructorName: currentUser.name,
       instructorAvatar: currentUser.avatar,
-      instructorTitle: "Senior Architect & Faculty",
-      learningOutcomes: [
-        "Architect production systems",
-        "Implement secure RESTful APIs",
-        "Master cloud deployments",
-      ],
-      requirements: ["Basic programming syntax"],
+      instructorTitle: currentUser.bio?.slice(0, 40) || "Senior Architect & Faculty",
     });
 
-    setShowCreateCourseModal(false);
-    setNewCourseTitle("");
-    setNewCourseSubtitle("");
+    setIsSubmittingCourse(false);
+
+    if (res && res.success) {
+      setCreateCourseSuccess("Course created successfully and submitted for Admin approval (status: pending).");
+      setTimeout(() => {
+        setShowCreateCourseModal(false);
+        setNewCourseTitle("");
+        setNewCourseSubtitle("");
+        setNewCourseDescription("");
+        setCreateCourseSuccess("");
+      }, 1500);
+    } else {
+      setCreateCourseError(res?.message || "Failed to create course. Please try again.");
+    }
   };
 
   const handleAddLecture = async (e: React.FormEvent) => {
@@ -179,8 +210,12 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
           </div>
 
           <button
-            onClick={() => setShowCreateCourseModal(true)}
-            className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-600/30 transition-all flex items-center gap-2"
+            onClick={() => {
+              setCreateCourseError("");
+              setCreateCourseSuccess("");
+              setShowCreateCourseModal(true);
+            }}
+            className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-600/30 transition-all flex items-center gap-2 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             <span>Create New Course</span>
@@ -240,13 +275,24 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
 
       {/* Courses Management Table */}
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-2xs space-y-4 p-5">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div>
             <h2 className="text-base font-bold text-slate-900">Course Curriculum Management</h2>
             <p className="text-xs text-slate-500">
               Upload videos to S3, manage sections, and inspect verification statuses
             </p>
           </div>
+          <button
+            onClick={() => {
+              setCreateCourseError("");
+              setCreateCourseSuccess("");
+              setShowCreateCourseModal(true);
+            }}
+            className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Create Course</span>
+          </button>
         </div>
 
         <div className="overflow-x-auto">
@@ -342,16 +388,35 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
 
       {/* Modal: Create New Course */}
       {showCreateCourseModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-lg w-full p-6 space-y-4">
-            <h3 className="text-base font-bold text-slate-900">
-              Create New Curriculum Course
-            </h3>
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-xl w-full p-6 space-y-4 my-8 max-h-[90vh] overflow-y-auto">
+            <div>
+              <h3 className="text-base font-bold text-slate-900">
+                Create New Curriculum Course
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Submit course details to MongoDB. The course will be saved with <span className="font-semibold text-amber-600">status: "pending"</span> awaiting administrative approval before going live.
+              </p>
+            </div>
 
-            <form onSubmit={handleCreateCourse} className="space-y-3 text-xs">
+            {createCourseError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-center gap-2 text-rose-700 text-xs">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{createCourseError}</span>
+              </div>
+            )}
+
+            {createCourseSuccess && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2 text-emerald-800 text-xs">
+                <CheckCircle className="w-4 h-4 shrink-0 text-emerald-600" />
+                <span>{createCourseSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleCreateCourse} className="space-y-3.5 text-xs">
               <div>
                 <label className="font-semibold text-slate-700 block mb-1">
-                  Course Title
+                  Course Title <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="text"
@@ -359,7 +424,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                   value={newCourseTitle}
                   onChange={(e) => setNewCourseTitle(e.target.value)}
                   placeholder="e.g., Full Stack GraphQL & Next.js Microservices"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
 
@@ -372,11 +437,24 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                   value={newCourseSubtitle}
                   onChange={(e) => setNewCourseSubtitle(e.target.value)}
                   placeholder="e.g., Build resilient production platforms from scratch."
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">
+                  Full Description
+                </label>
+                <textarea
+                  rows={3}
+                  value={newCourseDescription}
+                  onChange={(e) => setNewCourseDescription(e.target.value)}
+                  placeholder="Detailed curriculum overview, target audience, and engineering principles covered..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 resize-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="font-semibold text-slate-700 block mb-1">
                     Category
@@ -390,6 +468,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                     <option>Frontend</option>
                     <option>Cloud & DevOps</option>
                     <option>System Design</option>
+                    <option>Cybersecurity</option>
+                    <option>Data Science</option>
                   </select>
                 </div>
 
@@ -407,33 +487,100 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                     <option value="Advanced">Advanced</option>
                   </select>
                 </div>
+
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">
+                    Language
+                  </label>
+                  <input
+                    type="text"
+                    value={newCourseLanguage}
+                    onChange={(e) => setNewCourseLanguage(e.target.value)}
+                    placeholder="e.g., English, Hindi"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800"
+                  />
+                </div>
               </div>
 
-              <div>
-                <label className="font-semibold text-slate-700 block mb-1">
-                  Tuition Price (INR ₹)
-                </label>
-                <input
-                  type="number"
-                  value={newCoursePrice}
-                  onChange={(e) => setNewCoursePrice(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 font-mono"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">
+                    Tuition Price (INR ₹) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min="0"
+                    value={newCoursePrice}
+                    onChange={(e) => setNewCoursePrice(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">
+                    Thumbnail Image URL
+                  </label>
+                  <input
+                    type="url"
+                    value={newCourseThumbnail}
+                    onChange={(e) => setNewCourseThumbnail(e.target.value)}
+                    placeholder="https://..."
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 text-xs"
+                  />
+                </div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">
+                    Requirements (one per line)
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={newCourseRequirements}
+                    onChange={(e) => setNewCourseRequirements(e.target.value)}
+                    placeholder="e.g., Basic JavaScript&#10;Node.js installed"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 resize-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">
+                    Learning Outcomes (one per line)
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={newCourseLearningOutcomes}
+                    onChange={(e) => setNewCourseLearningOutcomes(e.target.value)}
+                    placeholder="e.g., Build production systems&#10;Deploy to cloud infrastructure"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 resize-none"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
+                  disabled={isSubmittingCourse}
                   onClick={() => setShowCreateCourseModal(false)}
-                  className="px-4 py-2 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50"
+                  className="px-4 py-2 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 disabled:opacity-50 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg"
+                  disabled={isSubmittingCourse}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-sm disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
                 >
-                  Create & Submit for Approval
+                  {isSubmittingCourse ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Saving to MongoDB...</span>
+                    </>
+                  ) : (
+                    <span>Create & Submit for Approval</span>
+                  )}
                 </button>
               </div>
             </form>
