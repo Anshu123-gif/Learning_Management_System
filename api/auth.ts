@@ -156,7 +156,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // 2. LOGIN: Validates email & password -> Checks user in MongoDB -> Compares hashed password with bcrypt -> Returns JWT & user
   if (isLogin) {
     try {
-      const { email, password } = req.body || {};
+      const { email, password, selectedRole } = req.body || {};
 
       if (!email || !password) {
         return res.status(400).json({ success: false, message: "Both email and password are required." });
@@ -189,7 +189,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
-      // Generate JWT Token
+      // Validate selected role against authoritative database role
+      if (selectedRole && ["student", "teacher", "admin"].includes(selectedRole)) {
+        if (user.role !== selectedRole) {
+          const formattedActual = user.role.charAt(0).toUpperCase() + user.role.slice(1);
+          const formattedSelected = selectedRole.charAt(0).toUpperCase() + selectedRole.slice(1);
+          return res.status(403).json({
+            success: false,
+            message: `Role mismatch: This account is registered as a ${formattedActual}, not a ${formattedSelected}. Please select ${formattedActual} to log in.`,
+          });
+        }
+      }
+
+      // Generate JWT Token using authoritative MongoDB role
       const token = jwt.sign(
         { userId: user.userId, email: user.email, role: user.role },
         JWT_SECRET,

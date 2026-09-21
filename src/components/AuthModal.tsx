@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { X, RefreshCw, AlertCircle, CheckCircle2, Eye, EyeOff, Lock, Mail, User as UserIcon } from "lucide-react";
+import { X, RefreshCw, AlertCircle, CheckCircle2, Eye, EyeOff, Lock, Mail, User as UserIcon, Shield, GraduationCap, School } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import { UserRole } from "../types";
 
 export const AuthModal: React.FC = () => {
   const {
@@ -11,6 +12,9 @@ export const AuthModal: React.FC = () => {
     signup,
     mongoStatus,
   } = useAuth();
+
+  // Selected Role for Login (Student, Teacher, Admin)
+  const [selectedRole, setSelectedRole] = useState<UserRole>("student");
 
   // "login" or "signup"
   const [activeTab, setActiveTab] = useState<"login" | "signup">(authModalMode);
@@ -35,9 +39,23 @@ export const AuthModal: React.FC = () => {
 
   // Sync mode whenever opened or changed
   useEffect(() => {
-    setActiveTab(authModalMode);
+    // If opening or switching, keep signup only if role is student; otherwise default to login
+    if (selectedRole !== "student" && authModalMode === "signup") {
+      setActiveTab("login");
+    } else {
+      setActiveTab(authModalMode);
+    }
     setStatusMessage(null);
   }, [authModalMode, isAuthModalOpen]);
+
+  // When selectedRole changes: if user was on signup and switches to Teacher/Admin, force to login
+  const handleRoleChange = (newRole: UserRole) => {
+    setSelectedRole(newRole);
+    setStatusMessage(null);
+    if (newRole !== "student" && activeTab === "signup") {
+      setActiveTab("login");
+    }
+  };
 
   if (!isAuthModalOpen) return null;
 
@@ -63,7 +81,7 @@ export const AuthModal: React.FC = () => {
     if (!emailRegex.test(cleanEmail)) {
       setStatusMessage({
         type: "error",
-        text: "Please enter a valid email format (e.g., student@example.com).",
+        text: "Please enter a valid email format (e.g., user@example.com).",
       });
       return;
     }
@@ -79,7 +97,8 @@ export const AuthModal: React.FC = () => {
     setIsProcessing(true);
 
     try {
-      const result = await login(cleanEmail, loginPassword, "student");
+      // Pass selectedRole so backend validates against authoritative MongoDB role
+      const result = await login(cleanEmail, loginPassword, selectedRole);
       setIsProcessing(false);
 
       if (!result.success) {
@@ -202,6 +221,31 @@ export const AuthModal: React.FC = () => {
           </span>
         </div>
 
+        {/* ----------------- ROLE SELECTOR DROPDOWN ----------------- */}
+        <div className="mb-5">
+          <label className="block text-xs font-semibold text-neutral-300 mb-1.5 flex items-center justify-between">
+            <span>Portal Role</span>
+            <span className="text-[10px] text-neutral-500 font-mono">
+              {selectedRole === "student" ? "Public Access" : "Staff Access"}
+            </span>
+          </label>
+          <div className="relative">
+            <select
+              id="pw-auth-role-select"
+              value={selectedRole}
+              onChange={(e) => handleRoleChange(e.target.value as UserRole)}
+              className="w-full py-2.5 px-3.5 bg-[#141416] border border-neutral-700 hover:border-neutral-600 focus:border-[#E84A27] focus:ring-1 focus:ring-[#E84A27] rounded-lg text-sm text-neutral-200 font-medium cursor-pointer transition-all outline-none appearance-none"
+            >
+              <option value="student">Student</option>
+              <option value="teacher">Teacher</option>
+              <option value="admin">Admin</option>
+            </select>
+            <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-neutral-400 text-xs">
+              ▼
+            </div>
+          </div>
+        </div>
+
         {/* ----------------- LOGIN VIEW ----------------- */}
         {activeTab === "login" && (
           <div>
@@ -209,19 +253,29 @@ export const AuthModal: React.FC = () => {
             <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-white font-display mb-1.5">
               Sign In
             </h2>
-            <div className="text-sm text-neutral-400 mb-6 font-normal">
-              <span>New user? </span>
-              <button
-                id="pw-switch-to-signup-btn"
-                type="button"
-                onClick={() => {
-                  setActiveTab("signup");
-                  setStatusMessage(null);
-                }}
-                className="text-[#E84A27] hover:underline font-medium cursor-pointer transition-colors"
-              >
-                Create an account
-              </button>
+            <div className="text-sm text-neutral-400 mb-6 font-normal min-h-[20px]">
+              {selectedRole === "student" ? (
+                <>
+                  <span>New user? </span>
+                  <button
+                    id="pw-switch-to-signup-btn"
+                    type="button"
+                    onClick={() => {
+                      setActiveTab("signup");
+                      setStatusMessage(null);
+                    }}
+                    className="text-[#E84A27] hover:underline font-medium cursor-pointer transition-colors"
+                  >
+                    Create an account
+                  </button>
+                </>
+              ) : (
+                <span className="text-xs text-neutral-400">
+                  {selectedRole === "teacher"
+                    ? "Instructor Portal: Sign in with your verified faculty credentials."
+                    : "Administration Portal: Sign in with super-administrator credentials."}
+                </span>
+              )}
             </div>
 
             {/* Status Alert */}
@@ -312,15 +366,15 @@ export const AuthModal: React.FC = () => {
                     <span>Verifying credentials...</span>
                   </span>
                 ) : (
-                  <span>Sign In</span>
+                  <span>Sign In as {selectedRole.charAt(0).toUpperCase() + selectedRole.slice(1)}</span>
                 )}
               </button>
             </form>
           </div>
         )}
 
-        {/* ----------------- SIGN UP VIEW ----------------- */}
-        {activeTab === "signup" && (
+        {/* ----------------- SIGN UP VIEW (Only accessible when Student is selected) ----------------- */}
+        {activeTab === "signup" && selectedRole === "student" && (
           <div>
             {/* Header */}
             <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-white font-display mb-1.5">

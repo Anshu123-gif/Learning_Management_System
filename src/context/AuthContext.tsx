@@ -225,6 +225,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           body: JSON.stringify({
             email: cleanInput,
             password: password,
+            selectedRole: preferredRole,
           }),
         });
 

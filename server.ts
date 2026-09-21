@@ -901,6 +901,19 @@ User role: ${userRole || "Student"}.`;
         });
       }
 
+      // Validate selected role against authoritative database role
+      const { selectedRole } = req.body;
+      if (selectedRole && ["student", "teacher", "admin"].includes(selectedRole)) {
+        if (user.role !== selectedRole) {
+          const formattedActual = user.role.charAt(0).toUpperCase() + user.role.slice(1);
+          const formattedSelected = selectedRole.charAt(0).toUpperCase() + selectedRole.slice(1);
+          return res.status(403).json({
+            success: false,
+            message: `Role mismatch: This account is registered as a ${formattedActual}, not a ${formattedSelected}. Please select ${formattedActual} to log in.`,
+          });
+        }
+      }
+
       // Generate JWT Token
       const token = jwt.sign(
         { userId: user.userId, email: user.email, role: user.role },
