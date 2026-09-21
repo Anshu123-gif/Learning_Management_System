@@ -38,7 +38,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSearchChange,
   onOpenDossier,
 }) => {
-  const { currentUser, isAuthenticated, activeRole, switchRole, logout, openAuthModal } = useAuth();
+  const { currentUser, isAuthenticated, activeRole, logout, openAuthModal } = useAuth();
   const { certificates } = useLms();
   const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
 
@@ -69,18 +69,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   const studentCertCount = currentUser
     ? certificates.filter((c) => c.studentId === currentUser._id).length
     : 0;
-
-  const handleRoleSelect = (role: UserRole) => {
-    switchRole(role);
-    setRoleDropdownOpen(false);
-    if (role === "student" && activeTab !== "catalog" && activeTab !== "my-learning" && activeTab !== "my-courses") {
-      handleTabChange("catalog");
-    } else if (role === "teacher") {
-      handleTabChange("instructor");
-    } else if (role === "admin") {
-      handleTabChange("admin");
-    }
-  };
 
   return (
     <header className="sticky top-0 z-40 bg-[#0b0b0c]/90 backdrop-blur-md border-b border-neutral-800/80 shadow-xs">
@@ -243,48 +231,13 @@ export const Navbar: React.FC<NavbarProps> = ({
                       </div>
                     </div>
 
-                    <div className="p-1.5 space-y-1">
-                      <button
-                        onClick={() => handleRoleSelect("student")}
-                        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium text-left transition-colors cursor-pointer ${
-                          activeRole === "student"
-                            ? "bg-neutral-800 text-[#E84A27] font-bold"
-                            : "text-neutral-300 hover:bg-neutral-800"
-                        }`}
-                      >
-                        <span>Student View</span>
-                        {activeRole === "student" && (
-                          <span className="w-2 h-2 rounded-full bg-[#E84A27]"></span>
-                        )}
-                      </button>
-
-                      <button
-                        onClick={() => handleRoleSelect("teacher")}
-                        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium text-left transition-colors cursor-pointer ${
-                          activeRole === "teacher"
-                            ? "bg-neutral-800 text-[#E84A27] font-bold"
-                            : "text-neutral-300 hover:bg-neutral-800"
-                        }`}
-                      >
-                        <span>Instructor Studio</span>
-                        {activeRole === "teacher" && (
-                          <span className="w-2 h-2 rounded-full bg-[#E84A27]"></span>
-                        )}
-                      </button>
-
-                      <button
-                        onClick={() => handleRoleSelect("admin")}
-                        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium text-left transition-colors cursor-pointer ${
-                          activeRole === "admin"
-                            ? "bg-neutral-800 text-[#E84A27] font-bold"
-                            : "text-neutral-300 hover:bg-neutral-800"
-                        }`}
-                      >
-                        <span>Admin Panel</span>
-                        {activeRole === "admin" && (
-                          <span className="w-2 h-2 rounded-full bg-[#E84A27]"></span>
-                        )}
-                      </button>
+                    <div className="p-3 space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-neutral-400">Account Role</span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-neutral-800 text-[#E84A27] border border-neutral-700">
+                          {activeRole}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="pt-2 mt-1 border-t border-neutral-800 px-1.5">

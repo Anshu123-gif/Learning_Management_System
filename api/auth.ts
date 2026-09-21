@@ -62,7 +62,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // 1. SIGNUP: Validates name, email, password -> Checks existing email -> Hashes password with bcrypt -> Saves to MongoDB -> Returns JWT & user
   if (isSignup) {
     try {
-      const { name, email, password, role } = req.body || {};
+      const { name, email, password } = req.body || {};
 
       // Validate inputs
       if (!name || typeof name !== "string" || !name.trim()) {
@@ -105,20 +105,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const hashedPassword = await bcrypt.hash(password, salt);
 
       const userId = `usr_${Date.now()}`;
-      const defaultAvatar =
-        role === "teacher"
-          ? "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80"
-          : role === "admin"
-          ? "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&auto=format&fit=crop&q=80"
-          : "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80";
+      const defaultAvatar = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80";
 
-      // Create new user record in MongoDB
+      // Create new user record in MongoDB - strictly enforce 'student' role
       const newUser = new MongoUser({
         userId,
         name: name.trim(),
         email: cleanEmail,
         password: hashedPassword,
-        role: role || "student",
+        role: "student",
         avatar: defaultAvatar,
         bio: "Learner at Sheryians Coding School",
         enrolledCourses: [],
@@ -126,7 +121,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
 
       await newUser.save();
-      console.log(`✅ [MongoDB / Vercel API] New user registered successfully: ${newUser.email}`);
+      console.log(`✅ [MongoDB / Vercel API] New user registered successfully as student: ${newUser.email}`);
 
       // Generate secure JWT token
       const token = jwt.sign(

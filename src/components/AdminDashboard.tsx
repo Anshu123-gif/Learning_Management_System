@@ -25,7 +25,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onSelectCourse,
 }) => {
   const { courses, approveCourse, rejectCourse, payments, processRefund } = useLms();
-  const { currentUser, quickDemoLogin, openAuthModal } = useAuth();
+  const { currentUser, openAuthModal } = useAuth();
 
   if (!currentUser || currentUser.role !== "admin") {
     return (
@@ -39,18 +39,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         <p className="text-sm text-slate-600 leading-relaxed">
           Please login with administrator credentials to approve courses, audit transactions, and process refunds.
         </p>
-        <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
-          <button
-            onClick={() => quickDemoLogin("admin")}
-            className="w-full sm:w-auto px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold text-sm rounded-xl shadow-md shadow-purple-600/20 transition-all cursor-pointer"
-          >
-            1-Click Login as Dean / Admin
-          </button>
+        <div className="flex justify-center items-center gap-3 pt-2">
           <button
             onClick={() => openAuthModal("login")}
-            className="w-full sm:w-auto px-5 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-semibold text-sm rounded-xl transition-all cursor-pointer"
+            className="px-6 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold text-sm rounded-xl shadow-md shadow-purple-600/20 transition-all cursor-pointer"
           >
-            Enter Credentials
+            Sign In with Administrator Credentials
           </button>
         </div>
       </div>

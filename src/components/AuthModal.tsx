@@ -9,7 +9,6 @@ export const AuthModal: React.FC = () => {
     closeAuthModal,
     login,
     signup,
-    quickDemoLogin,
     mongoStatus,
   } = useAuth();
 
@@ -317,36 +316,6 @@ export const AuthModal: React.FC = () => {
                 )}
               </button>
             </form>
-
-            {/* Quick Demo Login Switcher */}
-            <div className="mt-7 pt-4 border-t border-neutral-900 flex items-center justify-between text-[11px] text-neutral-500">
-              <span>Quick Test Access:</span>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => quickDemoLogin("student")}
-                  className="hover:text-neutral-300 underline cursor-pointer"
-                >
-                  Student
-                </button>
-                <span>•</span>
-                <button
-                  type="button"
-                  onClick={() => quickDemoLogin("teacher")}
-                  className="hover:text-neutral-300 underline cursor-pointer"
-                >
-                  Instructor
-                </button>
-                <span>•</span>
-                <button
-                  type="button"
-                  onClick={() => quickDemoLogin("admin")}
-                  className="hover:text-neutral-300 underline cursor-pointer"
-                >
-                  Admin
-                </button>
-              </div>
-            </div>
           </div>
         )}
 
@@ -487,36 +456,6 @@ export const AuthModal: React.FC = () => {
                 )}
               </button>
             </form>
-
-            {/* Quick Demo Switcher */}
-            <div className="mt-6 pt-4 border-t border-neutral-900 flex items-center justify-between text-[11px] text-neutral-500">
-              <span>Quick Test Access:</span>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => quickDemoLogin("student")}
-                  className="hover:text-neutral-300 underline cursor-pointer"
-                >
-                  Student
-                </button>
-                <span>•</span>
-                <button
-                  type="button"
-                  onClick={() => quickDemoLogin("teacher")}
-                  className="hover:text-neutral-300 underline cursor-pointer"
-                >
-                  Instructor
-                </button>
-                <span>•</span>
-                <button
-                  type="button"
-                  onClick={() => quickDemoLogin("admin")}
-                  className="hover:text-neutral-300 underline cursor-pointer"
-                >
-                  Admin
-                </button>
-              </div>
-            </div>
           </div>
         )}
       </div>

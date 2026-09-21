@@ -10,6 +10,14 @@
       "destination": "/api/payments?path=:path*"
     },
     {
+      "source": "/api/courses/:path*",
+      "destination": "/api/courses?path=:path*"
+    },
+    {
+      "source": "/api/courses",
+      "destination": "/api/courses"
+    },
+    {
       "source": "/api/health",
       "destination": "/api/auth?path=health"
     },

@@ -144,6 +144,41 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem("edupulse_payments", JSON.stringify(payments));
   }, [payments]);
 
+  // Fetch courses from MongoDB on mount (merging with existing mock/local courses without deleting them)
+  useEffect(() => {
+    const fetchMongoCourses = async () => {
+      try {
+        const token = localStorage.getItem("edupulse_jwt_token");
+        const headers: Record<string, string> = {};
+        if (token) {
+          headers["Authorization"] = `Bearer ${token}`;
+        }
+        // If teacher/admin, request all courses so they see their drafts & pending
+        const url = currentUser?.role === "teacher" || currentUser?.role === "admin"
+          ? "/api/courses?all=true"
+          : "/api/courses";
+
+        const res = await fetch(url, { headers });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.courses) && data.courses.length > 0) {
+            setCourses((prev) => {
+              const mongoCourses: Course[] = data.courses;
+              const mongoIds = new Set(mongoCourses.map((c) => c._id));
+              // Keep non-conflicting existing/mock courses, putting MongoDB courses first
+              const remainingPrev = prev.filter((c) => !mongoIds.has(c._id));
+              return [...mongoCourses, ...remainingPrev];
+            });
+          }
+        }
+      } catch (err) {
+        console.warn("Could not fetch courses from backend API:", err);
+      }
+    };
+
+    fetchMongoCourses();
+  }, [currentUser]);
+
   const getCourseById = (courseId: string) => {
     return courses.find((c) => c._id === courseId);
   };
@@ -164,7 +199,52 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
-  const createCourse = (newCourse: Partial<Course>) => {
+  const createCourse = async (newCourse: Partial<Course>) => {
+    // 1. Send authoritative creation request to MongoDB backend
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
+      const res = await fetch("/api/courses", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          title: newCourse.title || "Untitled Course",
+          subtitle: newCourse.subtitle || "",
+          description: newCourse.description || "",
+          category: newCourse.category || "Web Development",
+          level: newCourse.level || "Beginner",
+          thumbnail: newCourse.thumbnail || "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=800&auto=format&fit=crop&q=80",
+          price: newCourse.price ?? 999,
+          originalPrice: (newCourse.price ?? 999) * 2,
+          requirements: newCourse.requirements,
+          learningOutcomes: newCourse.learningOutcomes,
+          sections: newCourse.sections,
+          language: newCourse.language || "English",
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.course) {
+          const createdMongoCourse: Course = data.course;
+          setCourses((prev) => [createdMongoCourse, ...prev.filter((c) => c._id !== createdMongoCourse._id)]);
+          return;
+        }
+      } else {
+        const errorData = await res.json().catch(() => ({}));
+        console.warn("MongoDB course creation returned error:", errorData.message);
+      }
+    } catch (err) {
+      console.warn("Network error during /api/courses POST:", err);
+    }
+
+    // 2. Fallback local state creation if offline or demo mode
     const courseId = `course_${Date.now()}`;
     const course: Course = {
       _id: courseId,

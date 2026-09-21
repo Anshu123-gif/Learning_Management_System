@@ -15,10 +15,8 @@ export interface AuthContextType {
   openAuthModal: (mode?: "login" | "signup", intendedAction?: () => void) => void;
   closeAuthModal: () => void;
   login: (emailOrPhone: string, password?: string, role?: UserRole) => Promise<{ success: boolean; message?: string }>;
-  signup: (userData: { name: string; email: string; phone?: string; role: UserRole; password?: string }) => Promise<{ success: boolean; message?: string }>;
-  quickDemoLogin: (role: UserRole) => void;
+  signup: (userData: { name: string; email: string; phone?: string; role?: UserRole; password?: string }) => Promise<{ success: boolean; message?: string }>;
   logout: () => void;
-  switchRole: (role: UserRole) => void;
   switchUser: (userId: string) => void;
   updateUserWishlist: (courseId: string) => void;
   isWishlisted: (courseId: string) => boolean;
@@ -59,7 +57,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           // If MongoDB is connected, fetch users from MongoDB Atlas
           if (status.connected) {
-            const usersRes = await fetch("/api/mongo/users");
+            const token = localStorage.getItem("edupulse_jwt_token");
+            const headers: Record<string, string> = {};
+            if (token) {
+              headers["Authorization"] = `Bearer ${token}`;
+            }
+            const usersRes = await fetch("/api/mongo/users", { headers });
             if (usersRes.ok) {
               const usersData = await usersRes.json();
               if (usersData.success && Array.isArray(usersData.users) && usersData.users.length > 0) {
@@ -380,7 +383,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       name: userData.name.trim() || "New Learner",
       email: cleanEmail,
       phone: userData.phone?.replace(/\D/g, "") || "",
-      role: userData.role || "student",
+      role: "student",
       avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80",
       bio: "Member of Sheryians Coding School.",
       enrolledCourses: [],
@@ -396,30 +399,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { success: true };
   };
 
-  const quickDemoLogin = (role: UserRole) => {
-    const demoUser = users.find((u) => u.role === role) || users[0];
-    if (demoUser) {
-      setCurrentUserId(demoUser._id);
-      setIsAuthModalOpen(false);
-      executePendingAction();
-    }
-  };
-
   const logout = () => {
     setCurrentUserId(null);
     localStorage.removeItem("edupulse_active_user_id");
     localStorage.removeItem("edupulse_jwt_token");
-  };
-
-  const switchRole = (role: UserRole) => {
-    const targetUser = users.find((u) => u.role === role);
-    if (targetUser) {
-      setCurrentUserId(targetUser._id);
-    } else if (currentUser) {
-      const updated = users.map((u) => (u._id === currentUser._id ? { ...u, role } : u));
-      setUsers(updated);
-      persistUserToDatabases({ ...currentUser, role });
-    }
   };
 
   const switchUser = (userId: string) => {
@@ -465,9 +448,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         closeAuthModal,
         login,
         signup,
-        quickDemoLogin,
         logout,
-        switchRole,
         switchUser,
         updateUserWishlist,
         isWishlisted,

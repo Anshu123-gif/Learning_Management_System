@@ -12,7 +12,14 @@ import { connectMongoDB, isMongoConnected } from "./server/db.js";
 import { MongoUser } from "./server/models/User.js";
 import { MongoPayment } from "./server/models/Payment.js";
 import { MongoEnrollment } from "./server/models/Enrollment.js";
+import { MongoCourse } from "./server/models/Course.js";
 import { fulfillEnrollmentAndPayment } from "./api/payments.js";
+import { createCourseInDb, getCoursesFromDb } from "./api/courses.js";
+import {
+  requireAuth,
+  requireRole,
+  requireOwnerOrAdmin,
+} from "./server/authMiddleware.js";
 
 dotenv.config();
 
@@ -500,37 +507,47 @@ async function startServer() {
     });
   });
 
-  // GET /api/mongo/enrollments/:userId: Fetches student's enrollments from MongoDB
-  app.get("/api/mongo/enrollments/:userId", async (req, res) => {
-    try {
-      const { userId } = req.params;
-      const connected = await connectMongoDB();
-      if (!connected) {
-        return res.status(503).json({ success: false, message: "MongoDB connection offline." });
+  // GET /api/mongo/enrollments/:userId: Fetches student's enrollments from MongoDB (Owner or Admin only)
+  app.get(
+    "/api/mongo/enrollments/:userId",
+    requireAuth,
+    requireOwnerOrAdmin("userId"),
+    async (req, res) => {
+      try {
+        const { userId } = req.params;
+        const connected = await connectMongoDB();
+        if (!connected) {
+          return res.status(503).json({ success: false, message: "MongoDB connection offline." });
+        }
+
+        const enrollments = await MongoEnrollment.find({ studentId: userId }).lean();
+        return res.json({ success: true, enrollments });
+      } catch (err: any) {
+        return res.status(500).json({ success: false, message: err.message });
       }
-
-      const enrollments = await MongoEnrollment.find({ studentId: userId }).lean();
-      return res.json({ success: true, enrollments });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, message: err.message });
     }
-  });
+  );
 
-  // GET /api/mongo/payments/:userId: Fetches student's verified payment history from MongoDB
-  app.get("/api/mongo/payments/:userId", async (req, res) => {
-    try {
-      const { userId } = req.params;
-      const connected = await connectMongoDB();
-      if (!connected) {
-        return res.status(503).json({ success: false, message: "MongoDB connection offline." });
+  // GET /api/mongo/payments/:userId: Fetches student's verified payment history from MongoDB (Owner or Admin only)
+  app.get(
+    "/api/mongo/payments/:userId",
+    requireAuth,
+    requireOwnerOrAdmin("userId"),
+    async (req, res) => {
+      try {
+        const { userId } = req.params;
+        const connected = await connectMongoDB();
+        if (!connected) {
+          return res.status(503).json({ success: false, message: "MongoDB connection offline." });
+        }
+
+        const payments = await MongoPayment.find({ studentId: userId }).lean();
+        return res.json({ success: true, payments });
+      } catch (err: any) {
+        return res.status(500).json({ success: false, message: err.message });
       }
-
-      const payments = await MongoPayment.find({ studentId: userId }).lean();
-      return res.json({ success: true, payments });
-    } catch (err: any) {
-      return res.status(500).json({ success: false, message: err.message });
     }
-  });
+  );
 
   // -------------------------------------------------------------
   // MONGODB USER AUTH & PERSISTENCE ROUTES
@@ -544,8 +561,8 @@ async function startServer() {
     });
   });
 
-  // Get all users from MongoDB
-  app.get("/api/mongo/users", async (req, res) => {
+  // Get all users from MongoDB (Admin only)
+  app.get("/api/mongo/users", requireAuth, requireRole("admin"), async (req, res) => {
     try {
       const connected = await connectMongoDB();
       if (!connected) {
@@ -560,10 +577,10 @@ async function startServer() {
     }
   });
 
-  // Register / Upsert user in MongoDB
+  // Register / Upsert user in MongoDB (Enforces role: 'student' on public registration)
   app.post("/api/mongo/users/register", async (req, res) => {
     try {
-      const { userId, name, email, phone, role, avatar, bio } = req.body;
+      const { userId, name, email, phone, avatar, bio } = req.body;
       if (!name || !email) {
         return res.status(400).json({ success: false, message: "Name and email are required." });
       }
@@ -591,13 +608,13 @@ async function startServer() {
         });
       }
 
-      // Create new user in MongoDB
+      // Create new user in MongoDB - strictly enforce role 'student' for registration
       user = new MongoUser({
         userId: userId || `usr_${Date.now()}`,
         name: name.trim(),
         email: cleanEmail,
         phone: cleanPhone,
-        role: role || "student",
+        role: "student",
         avatar: avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80",
         bio: bio || "Student at Sheryians Coding School",
         enrolledCourses: [],
@@ -605,7 +622,7 @@ async function startServer() {
       });
 
       await user.save();
-      console.log(`✅ Saved new user to MongoDB Atlas: ${user.email}`);
+      console.log(`✅ Saved new user to MongoDB Atlas: ${user.email} (role: student)`);
 
       return res.json({
         success: true,
@@ -651,6 +668,51 @@ async function startServer() {
     } catch (err: any) {
       console.error("Error finding user in MongoDB:", err);
       return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // -------------------------------------------------------------
+  // COURSE MANAGEMENT ROUTES (MongoDB Atlas)
+  // -------------------------------------------------------------
+
+  // POST /api/courses: Create a course (Requires teacher or admin role)
+  // Protected with requireAuth + requireRole("teacher", "admin")
+  // NEVER trusts instructorId/instructorName/instructorAvatar from the request body.
+  app.post(
+    "/api/courses",
+    requireAuth,
+    requireRole("teacher", "admin"),
+    async (req: any, res) => {
+      try {
+        const result = await createCourseInDb(req.body, req.user.userId);
+        return res.status(201).json(result);
+      } catch (err: any) {
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({
+          success: false,
+          message: err.message || "Failed to create course in MongoDB.",
+        });
+      }
+    }
+  );
+
+  // GET /api/courses: Public Course Catalog returns approved courses
+  // Optional: Teachers or Admins can pass ?all=true or ?myCourses=true with their token to see their own drafts
+  app.get("/api/courses", async (req, res) => {
+    try {
+      const result = await getCoursesFromDb({
+        authHeader: req.headers.authorization,
+        all: req.query.all as string,
+        myCourses: req.query.myCourses as string,
+        status: req.query.status as string,
+      });
+      return res.json(result);
+    } catch (err: any) {
+      const statusCode = err.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        message: err.message || "Failed to retrieve courses.",
+      });
     }
   });
 
@@ -718,7 +780,7 @@ User role: ${userRole || "Student"}.`;
   // 1. SIGNUP: Validates name, email, password -> Checks existing email -> Hashes password with bcrypt -> Saves to MongoDB -> Returns JWT & user
   app.post("/api/auth/signup", async (req, res) => {
     try {
-      const { name, email, password, role } = req.body;
+      const { name, email, password } = req.body;
 
       // Validate inputs
       if (!name || typeof name !== "string" || !name.trim()) {
@@ -758,20 +820,15 @@ User role: ${userRole || "Student"}.`;
       const hashedPassword = await bcrypt.hash(password, salt);
 
       const userId = `usr_${Date.now()}`;
-      const defaultAvatar =
-        role === "teacher"
-          ? "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80"
-          : role === "admin"
-          ? "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&auto=format&fit=crop&q=80"
-          : "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80";
+      const defaultAvatar = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80";
 
-      // Create new user record in MongoDB
+      // Create new user record in MongoDB - strictly enforce 'student' role
       const newUser = new MongoUser({
         userId,
         name: name.trim(),
         email: cleanEmail,
         password: hashedPassword,
-        role: role || "student",
+        role: "student",
         avatar: defaultAvatar,
         bio: "Learner at Sheryians Coding School",
         enrolledCourses: [],
@@ -779,7 +836,7 @@ User role: ${userRole || "Student"}.`;
       });
 
       await newUser.save();
-      console.log(`✅ [MongoDB] New user registered successfully: ${newUser.email}`);
+      console.log(`✅ [MongoDB] New user registered successfully as student: ${newUser.email}`);
 
       // Generate secure JWT token
       const token = jwt.sign(

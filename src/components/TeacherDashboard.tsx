@@ -28,7 +28,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   onSelectCourse,
 }) => {
   const { courses, addCourse, addSectionToCourse, addLectureToSection, discussions } = useLms();
-  const { currentUser, quickDemoLogin, openAuthModal } = useAuth();
+  const { currentUser, openAuthModal } = useAuth();
 
   if (!currentUser || currentUser.role !== "teacher") {
     return (
@@ -42,18 +42,12 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
         <p className="text-sm text-slate-600 leading-relaxed">
           Please login with an instructor account to upload video batches, create syllabus sections, and track student earnings.
         </p>
-        <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
-          <button
-            onClick={() => quickDemoLogin("teacher")}
-            className="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl shadow-md shadow-indigo-600/20 transition-all cursor-pointer"
-          >
-            1-Click Login as Faculty
-          </button>
+        <div className="flex justify-center items-center gap-3 pt-2">
           <button
             onClick={() => openAuthModal("login")}
-            className="w-full sm:w-auto px-5 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-semibold text-sm rounded-xl transition-all cursor-pointer"
+            className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl shadow-md shadow-indigo-600/20 transition-all cursor-pointer"
           >
-            Enter Credentials
+            Sign In with Instructor Credentials
           </button>
         </div>
       </div>
