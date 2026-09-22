@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
 import { connectMongoDB } from "../server/db.js";
 import { MongoCourse } from "../server/models/Course.js";
@@ -172,27 +173,38 @@ export async function updateCourseStatusInDb(
     updateFields.rejectionReason = "";
   }
 
-  // Target exact courseId (or _id fallback)
-  const updatedCourse = await MongoCourse.findOneAndUpdate(
-    { $or: [{ courseId: courseId }, { _id: courseId }] },
-    { $set: updateFields },
-    { new: true }
-  ).lean();
+  // Safe lookup logic: First search by custom courseId field.
+  // Never use $or with _id because custom course IDs (e.g. course_1790079597513)
+  // trigger Mongoose CastError when cast to ObjectId.
+  let course = await MongoCourse.findOne({ courseId: courseId });
 
-  if (!updatedCourse) {
+  if (!course && mongoose.Types.ObjectId.isValid(courseId)) {
+    course = await MongoCourse.findById(courseId);
+  }
+
+  if (!course) {
     const err: any = new Error(`Course with ID "${courseId}" not found in MongoDB.`);
     err.statusCode = 404;
     throw err;
   }
 
-  console.log(`✅ [Course Status Updated] "${updatedCourse.title}" (${updatedCourse.courseId}) -> ${newStatus}`);
+  // Update exact document fields safely
+  course.status = newStatus;
+  course.rejectionReason = updateFields.rejectionReason;
+  course.updatedAt = updateFields.updatedAt;
+
+  await course.save();
+
+  console.log(`✅ [Course Status Updated] "${course.title}" (${course.courseId}) -> ${newStatus}`);
+
+  const courseObj: any = course.toObject();
 
   return {
     success: true,
     message: `Course status successfully updated to "${newStatus}".`,
     course: {
-      ...updatedCourse,
-      _id: updatedCourse.courseId || updatedCourse._id,
+      ...courseObj,
+      _id: courseObj.courseId || courseObj._id,
     },
   };
 }
