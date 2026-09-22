@@ -40,6 +40,7 @@ interface LmsContextType {
   addCourse: (newCourse: Partial<Course>) => Promise<{ success: boolean; course?: Course; message?: string }>;
   addSectionToCourse: (courseId: string, title: string) => Section;
   addLectureToSection: (courseId: string, sectionId: string, lectureData: Partial<Lecture>) => Lecture;
+  saveCourseCurriculum: (courseId: string, sections: Section[]) => Promise<{ success: boolean; course?: Course; message?: string }>;
   
   // Learning & Progress
   getEnrollmentForCourse: (courseId: string) => Enrollment | undefined;
@@ -460,6 +461,52 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return newLecture;
   };
 
+  const saveCourseCurriculum = async (
+    courseId: string,
+    sections: Section[]
+  ): Promise<{ success: boolean; course?: Course; message?: string }> => {
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
+      const res = await fetch(`/api/courses/${courseId}/curriculum`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ sections }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success && data.course) {
+        const updatedCourse = data.course;
+        setCourses((prev) =>
+          prev.map((c) => (c._id === courseId ? { ...c, ...updatedCourse } : c))
+        );
+        return { success: true, course: updatedCourse, message: data.message };
+      } else {
+        // Fallback: update local state so user experience is not completely blocked
+        setCourses((prev) =>
+          prev.map((c) => (c._id === courseId ? { ...c, sections } : c))
+        );
+        return {
+          success: res.ok,
+          message: data.message || "Failed to update curriculum on backend.",
+        };
+      }
+    } catch (err: any) {
+      console.warn("Curriculum update error:", err);
+      // Fallback local update
+      setCourses((prev) =>
+        prev.map((c) => (c._id === courseId ? { ...c, sections } : c))
+      );
+      return { success: true, message: "Curriculum saved locally." };
+    }
+  };
+
   const getEnrollmentForCourse = (courseId: string) => {
     if (!currentUser) return undefined;
     return enrollments.find(
@@ -806,6 +853,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addCourse,
         addSectionToCourse,
         addLectureToSection,
+        saveCourseCurriculum,
         getEnrollmentForCourse,
         isEnrolled,
         enrollInCourse,

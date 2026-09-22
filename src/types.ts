@@ -26,8 +26,11 @@ export interface Lecture {
   sectionId: string;
   title: string;
   durationMinutes: number;
-  videoUrl: string; // S3 Key or signed URL
-  s3Key: string;
+  videoUrl?: string; // Cloudinary delivery URL or direct stream
+  videoPublicId?: string; // Cloudinary public_id (e.g. courses/course_123/lectures/lecture_456/video_xxx)
+  videoResourceType?: string; // "video"
+  videoKey?: string; // legacy compatibility
+  s3Key?: string; // legacy compatibility
   isPreviewFree: boolean;
   resources: Resource[];
   description?: string;

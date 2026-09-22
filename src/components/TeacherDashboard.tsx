@@ -27,7 +27,14 @@ interface TeacherDashboardProps {
 export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   onSelectCourse,
 }) => {
-  const { courses, addCourse, addSectionToCourse, addLectureToSection, discussions } = useLms();
+  const {
+    courses,
+    addCourse,
+    addSectionToCourse,
+    addLectureToSection,
+    saveCourseCurriculum,
+    discussions,
+  } = useLms();
   const { currentUser, openAuthModal } = useAuth();
 
   if (!currentUser || currentUser.role !== "teacher") {
@@ -87,8 +94,12 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const [newSectionTitle, setNewSectionTitle] = useState("");
   const [newLectureTitle, setNewLectureTitle] = useState("");
   const [newLectureDuration, setNewLectureDuration] = useState("20");
-  const [isUploadingToS3, setIsUploadingToS3] = useState(false);
-  const [s3UploadSuccess, setS3UploadSuccess] = useState(false);
+  const [selectedVideoFile, setSelectedVideoFile] = useState<File | null>(null);
+  const [isUploadingToCloudinary, setIsUploadingToCloudinary] = useState(false);
+  const [uploadProgressPercent, setUploadProgressPercent] = useState(0);
+  const [uploadStatusMessage, setUploadStatusMessage] = useState("");
+  const [uploadError, setUploadError] = useState("");
+  const [cloudinaryUploadSuccess, setCloudinaryUploadSuccess] = useState(false);
 
   const handleCreateCourse = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -147,42 +158,207 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     e.preventDefault();
     if (!selectedCourseForLecture || !newLectureTitle.trim()) return;
 
-    setIsUploadingToS3(true);
+    setIsUploadingToCloudinary(true);
+    setUploadError("");
+    setCloudinaryUploadSuccess(false);
+    setUploadProgressPercent(0);
+    setUploadStatusMessage("Preparing lecture...");
 
-    // Simulate S3 presigned URL generation and upload
-    setTimeout(() => {
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const authHeaders: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (token) {
+        authHeaders["Authorization"] = `Bearer ${token}`;
+      }
+
+      // 1. Determine target section
       let targetSectionId = selectedSectionId;
+      let currentSections: Section[] = JSON.parse(
+        JSON.stringify(selectedCourseForLecture.sections || [])
+      );
 
       if (!targetSectionId && newSectionTitle.trim()) {
-        const addedSection = addSectionToCourse(
-          selectedCourseForLecture._id,
-          newSectionTitle.trim()
-        );
-        targetSectionId = addedSection._id;
-      } else if (!targetSectionId && selectedCourseForLecture.sections[0]) {
-        targetSectionId = selectedCourseForLecture.sections[0]._id;
+        const newSecId = `sec_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        const newSec: Section = {
+          _id: newSecId,
+          courseId: selectedCourseForLecture._id,
+          title: newSectionTitle.trim(),
+          order: currentSections.length + 1,
+          lectures: [],
+        };
+        currentSections.push(newSec);
+        targetSectionId = newSecId;
+      } else if (!targetSectionId && currentSections.length > 0) {
+        targetSectionId = currentSections[0]._id;
+      } else if (!targetSectionId) {
+        const newSecId = `sec_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        const newSec: Section = {
+          _id: newSecId,
+          courseId: selectedCourseForLecture._id,
+          title: "Section 1: Course Overview",
+          order: 1,
+          lectures: [],
+        };
+        currentSections.push(newSec);
+        targetSectionId = newSecId;
       }
 
-      if (targetSectionId) {
-        addLectureToSection(selectedCourseForLecture._id, targetSectionId, {
-          title: newLectureTitle.trim(),
-          description: "Technical lecture uploaded to AWS S3 storage with signed access.",
-          durationMinutes: parseInt(newLectureDuration) || 15,
-          videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-          s3Key: `courses/${selectedCourseForLecture._id}/lectures/${Date.now()}.mp4`,
-          isPreviewFree: false,
+      const newLectureId = `lec_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      let videoPublicId = "";
+      let videoUrl = "";
+
+      // 2. If video file selected, upload directly to Cloudinary using signed upload
+      if (selectedVideoFile) {
+        // Validate file type
+        const allowedTypes = ["video/mp4", "video/webm", "video/quicktime", "video/x-matroska", "video/ogg"];
+        if (selectedVideoFile.type && !allowedTypes.includes(selectedVideoFile.type.toLowerCase())) {
+          throw new Error("Invalid file type. Please upload an MP4, WebM, QuickTime, or MKV video file.");
+        }
+
+        // Validate max size 2GB
+        if (selectedVideoFile.size > 2 * 1024 * 1024 * 1024) {
+          throw new Error("Video file exceeds the maximum 2GB size limit.");
+        }
+
+        setUploadStatusMessage("Requesting Cloudinary upload signature from backend...");
+        setUploadProgressPercent(10);
+
+        const sigRes = await fetch("/api/videos/upload-signature", {
+          method: "POST",
+          headers: authHeaders,
+          body: JSON.stringify({
+            courseId: selectedCourseForLecture._id,
+            lectureId: newLectureId,
+          }),
         });
+
+        const sigData = await sigRes.json();
+        if (!sigRes.ok || !sigData.success) {
+          throw new Error(sigData.message || "Failed to obtain Cloudinary upload signature.");
+        }
+
+        const { cloudName, apiKey, timestamp, signature, folder, publicId, uploadUrl } = sigData;
+
+        setUploadStatusMessage("Uploading video directly to Cloudinary CDN...");
+        setUploadProgressPercent(20);
+
+        // Prepare multipart form data for Cloudinary direct signed upload
+        const formData = new FormData();
+        formData.append("file", selectedVideoFile);
+        formData.append("api_key", apiKey);
+        formData.append("timestamp", String(timestamp));
+        formData.append("signature", signature);
+        formData.append("folder", folder);
+        formData.append("public_id", publicId);
+
+        // Upload directly from browser to Cloudinary
+        const cldResponse: any = await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", uploadUrl || `https://api.cloudinary.com/v1_1/${cloudName}/video/upload`, true);
+
+          xhr.upload.onprogress = (evt) => {
+            if (evt.lengthComputable) {
+              const pct = Math.round(20 + (evt.loaded / evt.total) * 70);
+              setUploadProgressPercent(pct);
+            }
+          };
+
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                const parsed = JSON.parse(xhr.responseText);
+                resolve(parsed);
+              } catch (e) {
+                reject(new Error("Invalid response format received from Cloudinary."));
+              }
+            } else {
+              let errorMsg = `Cloudinary upload error (${xhr.status})`;
+              try {
+                const errObj = JSON.parse(xhr.responseText);
+                if (errObj?.error?.message) {
+                  errorMsg = errObj.error.message;
+                }
+              } catch {}
+              reject(new Error(errorMsg));
+            }
+          };
+
+          xhr.onerror = () => {
+            reject(new Error("Network connection error during Cloudinary video upload."));
+          };
+
+          xhr.send(formData);
+        });
+
+        videoPublicId = cldResponse.public_id;
+        videoUrl = cldResponse.secure_url || cldResponse.url;
       }
 
-      setIsUploadingToS3(false);
-      setS3UploadSuccess(true);
+      setUploadStatusMessage("Saving curriculum structure to MongoDB...");
+      setUploadProgressPercent(93);
+
+      // 3. Assemble new lecture and attach to target section
+      const newLecture: Lecture = {
+        _id: newLectureId,
+        sectionId: targetSectionId,
+        title: newLectureTitle.trim(),
+        description: selectedVideoFile
+          ? `Uploaded video: ${selectedVideoFile.name} (${(selectedVideoFile.size / (1024 * 1024)).toFixed(1)} MB)`
+          : "Standard course curriculum lecture.",
+        durationMinutes: parseInt(newLectureDuration) || 15,
+        videoPublicId: videoPublicId || undefined,
+        videoResourceType: videoPublicId ? "video" : undefined,
+        videoUrl: videoUrl || undefined,
+        isPreviewFree: false,
+        resources: [],
+      };
+
+      currentSections = currentSections.map((sec) => {
+        if (sec._id === targetSectionId) {
+          return {
+            ...sec,
+            lectures: [...(sec.lectures || []), newLecture],
+          };
+        }
+        return sec;
+      });
+
+      // 4. Persist to MongoDB via PUT /api/courses/:id/curriculum
+      const saveRes = await saveCourseCurriculum(
+        selectedCourseForLecture._id,
+        currentSections
+      );
+
+      if (!saveRes.success) {
+        throw new Error(saveRes.message || "Failed to persist curriculum changes to database.");
+      }
+
+      // Update selectedCourseForLecture reference
+      setSelectedCourseForLecture((prev: any) =>
+        prev ? { ...prev, sections: currentSections } : prev
+      );
+
+      setUploadProgressPercent(100);
+      setUploadStatusMessage("Upload & Curriculum Sync Completed Successfully!");
+      setCloudinaryUploadSuccess(true);
+
       setTimeout(() => {
         setShowAddLectureModal(false);
-        setS3UploadSuccess(false);
+        setCloudinaryUploadSuccess(false);
         setNewLectureTitle("");
         setNewSectionTitle("");
-      }, 1200);
-    }, 1500);
+        setSelectedVideoFile(null);
+        setUploadProgressPercent(0);
+        setUploadStatusMessage("");
+        setIsUploadingToCloudinary(false);
+      }, 1500);
+    } catch (err: any) {
+      console.error("Lecture upload error:", err);
+      setUploadError(err.message || "Failed to complete lecture video upload.");
+      setIsUploadingToCloudinary(false);
+    }
   };
 
   return (
@@ -363,8 +539,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                             setSelectedCourseForLecture(course);
                             setShowAddLectureModal(true);
                           }}
-                          className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold rounded-lg text-xs flex items-center gap-1 transition-colors"
-                          title="Upload video to AWS S3"
+                          className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold rounded-lg text-xs flex items-center gap-1 transition-colors cursor-pointer"
+                          title="Upload video to Cloudinary"
                         >
                           <Upload className="w-3.5 h-3.5" />
                           <span>Add Lecture</span>
@@ -588,7 +764,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
         </div>
       )}
 
-      {/* Modal: Add Lecture & S3 Upload Simulation */}
+      {/* Modal: Add Lecture & Cloudinary Direct Signed Upload */}
       {showAddLectureModal && selectedCourseForLecture && (
         <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-lg w-full p-6 space-y-4">
@@ -596,7 +772,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
               <Upload className="w-5 h-5 text-indigo-600" />
               <div>
                 <h3 className="text-base font-bold text-slate-900">
-                  Upload Lecture to AWS S3
+                  Upload Lecture Video (Cloudinary)
                 </h3>
                 <p className="text-[11px] text-slate-500">
                   Course: {selectedCourseForLecture.title}
@@ -613,7 +789,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                   <select
                     value={selectedSectionId}
                     onChange={(e) => setSelectedSectionId(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 mb-2"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 mb-2 cursor-pointer"
                   >
                     <option value="">-- Or Create New Section Below --</option>
                     {selectedCourseForLecture.sections.map((s) => (
@@ -664,50 +840,111 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
 
                 <div>
                   <label className="font-semibold text-slate-700 block mb-1">
-                    S3 Bucket Target
+                    Storage Provider
                   </label>
-                  <div className="p-2 bg-slate-100 rounded-lg font-mono text-[10px] text-slate-600">
-                    edupulse-video-streams-prod
+                  <div className="p-2 bg-slate-100 rounded-lg font-mono text-[10px] text-slate-600 flex items-center justify-between">
+                    <span>Cloudinary Video</span>
+                    <span className="text-emerald-600 font-bold">Direct Signed</span>
                   </div>
                 </div>
               </div>
 
-              {/* S3 Upload Dropzone preview */}
-              <div className="border-2 border-dashed border-slate-300 rounded-xl p-4 text-center space-y-1 bg-slate-50/50">
-                <Video className="w-8 h-8 text-indigo-400 mx-auto" />
-                <div className="text-xs font-semibold text-slate-700">
-                  Select MP4 / MKV video lecture file
-                </div>
-                <div className="text-[10px] text-slate-400">
-                  Transcoding: 1080p, 720p, 480p with signed URL playback
-                </div>
+              {/* Real Video File Picker Dropzone */}
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">
+                  Video File (Direct to Cloudinary)
+                </label>
+                <label className="border-2 border-dashed border-indigo-200 hover:border-indigo-400 bg-indigo-50/30 hover:bg-indigo-50/60 rounded-xl p-4 text-center space-y-2 block cursor-pointer transition-colors">
+                  <input
+                    type="file"
+                    accept="video/mp4,video/webm,video/ogg,video/quicktime,video/mkv"
+                    className="hidden"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        setSelectedVideoFile(e.target.files[0]);
+                      }
+                    }}
+                  />
+                  <Video className="w-8 h-8 text-indigo-500 mx-auto" />
+                  {selectedVideoFile ? (
+                    <div>
+                      <div className="text-xs font-bold text-slate-800 truncate max-w-xs mx-auto">
+                        {selectedVideoFile.name}
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        {(selectedVideoFile.size / (1024 * 1024)).toFixed(2)} MB • {selectedVideoFile.type || "video/mp4"}
+                      </div>
+                      <span className="text-[10px] text-indigo-600 font-medium underline mt-1 inline-block">
+                        Click to change file
+                      </span>
+                    </div>
+                  ) : (
+                    <div>
+                      <div className="text-xs font-semibold text-slate-700">
+                        Choose course video file from your computer
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        MP4, MKV, WebM or MOV up to 2GB • Uploads directly to Cloudinary
+                      </div>
+                    </div>
+                  )}
+                </label>
               </div>
 
-              {s3UploadSuccess && (
+              {/* Progress and status message */}
+              {isUploadingToCloudinary && (
+                <div className="space-y-1.5 p-3 bg-indigo-50/80 border border-indigo-100 rounded-xl">
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-indigo-900">
+                    <span>{uploadStatusMessage}</span>
+                    <span>{uploadProgressPercent}%</span>
+                  </div>
+                  <div className="w-full bg-indigo-200 h-2 rounded-full overflow-hidden">
+                    <div
+                      className="bg-indigo-600 h-full rounded-full transition-all duration-300"
+                      style={{ width: `${uploadProgressPercent}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Error feedback */}
+              {uploadError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-center gap-2 text-rose-700 text-xs">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{uploadError}</span>
+                </div>
+              )}
+
+              {/* Success feedback */}
+              {cloudinaryUploadSuccess && (
                 <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2 text-emerald-700 text-xs font-semibold">
-                  <CheckCircle className="w-4 h-4 text-emerald-600" />
-                  <span>S3 Multipart Upload Complete! Presigned URL configured.</span>
+                  <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Cloudinary Direct Upload & MongoDB Curriculum Sync Complete!</span>
                 </div>
               )}
 
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  disabled={isUploadingToS3}
-                  onClick={() => setShowAddLectureModal(false)}
-                  className="px-4 py-2 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50"
+                  disabled={isUploadingToCloudinary}
+                  onClick={() => {
+                    setShowAddLectureModal(false);
+                    setSelectedVideoFile(null);
+                    setUploadError("");
+                  }}
+                  className="px-4 py-2 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 cursor-pointer disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={isUploadingToS3}
-                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-bold rounded-lg flex items-center gap-2"
+                  disabled={isUploadingToCloudinary}
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-bold rounded-lg flex items-center gap-2 cursor-pointer shadow-md"
                 >
-                  {isUploadingToS3 ? (
+                  {isUploadingToCloudinary ? (
                     <>
                       <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      <span>Uploading to S3...</span>
+                      <span>Uploading to Cloudinary...</span>
                     </>
                   ) : (
                     <span>Upload & Attach Lecture</span>

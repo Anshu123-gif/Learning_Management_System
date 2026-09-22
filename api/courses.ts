@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import { connectMongoDB } from "../server/db.js";
 import { MongoCourse } from "../server/models/Course.js";
 import { MongoUser } from "../server/models/User.js";
+import { updateCourseCurriculumInDb } from "../server/curriculumService.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "sheryians_lms_super_secure_jwt_secret_key_2025";
 
@@ -468,6 +469,86 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(statusCode).json({
         success: false,
         message: err.message || "Failed to update course status in MongoDB.",
+      });
+    }
+  }
+
+  // 4. PUT /api/courses: Update Course Curriculum (sections, lectures, videoKeys)
+  if (req.method === "PUT") {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({
+          success: false,
+          message: "Authentication required. Please provide a valid Bearer token.",
+        });
+      }
+
+      const token = authHeader.split(" ")[1];
+      let decoded: any;
+      try {
+        decoded = jwt.verify(token, JWT_SECRET);
+      } catch {
+        return res.status(401).json({
+          success: false,
+          message: "Invalid or expired session token.",
+        });
+      }
+
+      if (!decoded || !decoded.userId || !decoded.role) {
+        return res.status(401).json({
+          success: false,
+          message: "Invalid session token payload.",
+        });
+      }
+
+      let body = req.body;
+      if (typeof body === "string") {
+        try {
+          body = JSON.parse(body);
+        } catch {
+          // ignore
+        }
+      }
+
+      let courseId = (req.query?.id as string) || (req.query?.courseId as string) || "";
+      if (!courseId && req.query?.path) {
+        if (Array.isArray(req.query.path)) {
+          courseId = req.query.path[0];
+        } else if (typeof req.query.path === "string") {
+          courseId = req.query.path.split("/")[0];
+        }
+      }
+
+      if (!courseId && req.url) {
+        const urlWithoutQuery = req.url.split("?")[0];
+        const match = urlWithoutQuery.match(/\/api\/courses\/([^/]+)/);
+        if (match && match[1] && match[1] !== "curriculum") {
+          courseId = match[1];
+        }
+      }
+
+      if (!courseId) {
+        courseId = body?.courseId || body?.id || "";
+      }
+
+      const sections = body?.sections || [];
+
+      if (!courseId) {
+        return res.status(400).json({
+          success: false,
+          message: "Course ID is required to update curriculum.",
+        });
+      }
+
+      const result = await updateCourseCurriculumInDb(courseId, sections, decoded.userId, decoded.role);
+      return res.status(200).json(result);
+    } catch (err: any) {
+      console.error("[Vercel /api/courses] PUT Error:", err);
+      const statusCode = err.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        message: err.message || "Failed to update course curriculum in MongoDB.",
       });
     }
   }

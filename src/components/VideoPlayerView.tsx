@@ -18,6 +18,8 @@ import {
   Zap,
   Sparkles,
   HelpCircle,
+  AlertCircle,
+  Film,
 } from "lucide-react";
 import { Course, Lecture, Section } from "../types";
 import { useLms } from "../context/LmsContext";
@@ -77,6 +79,82 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
   const [personalNotes, setPersonalNotes] = useState<string>(() => {
     return localStorage.getItem(`notes_${course._id}`) || "";
   });
+
+  // Dynamic Cloudinary Secure Video Play URL & Loading states
+  const [streamVideoUrl, setStreamVideoUrl] = useState<string>("");
+  const [isLoadingStream, setIsLoadingStream] = useState<boolean>(false);
+  const [streamError, setStreamError] = useState<string>("");
+  const [streamSource, setStreamSource] = useState<string>("");
+
+  // Fetch authorized play URL for current lecture from Cloudinary
+  useEffect(() => {
+    if (!currentLecture) {
+      setStreamVideoUrl("");
+      setStreamError("Video is not available for this lecture yet.");
+      return;
+    }
+
+    let isMounted = true;
+    setIsLoadingStream(true);
+    setStreamError("");
+    setStreamVideoUrl("");
+
+    const fetchPlayUrl = async () => {
+      try {
+        const token = localStorage.getItem("edupulse_jwt_token");
+        const headers: Record<string, string> = {};
+        if (token) {
+          headers["Authorization"] = `Bearer ${token}`;
+        }
+
+        const res = await fetch(
+          `/api/videos/play-url?courseId=${encodeURIComponent(course._id)}&lectureId=${encodeURIComponent(
+            currentLecture._id
+          )}`,
+          { headers }
+        );
+
+        const data = await res.json();
+
+        if (!isMounted) return;
+
+        if (res.ok && data.success && data.videoUrl) {
+          setStreamVideoUrl(data.videoUrl);
+          setStreamSource(data.source || "cloudinary");
+          setStreamError("");
+        } else {
+          // If backend couldn't generate Cloudinary signed url, check if lecture has a direct fallback videoUrl
+          if (currentLecture.videoUrl) {
+            setStreamVideoUrl(currentLecture.videoUrl);
+            setStreamSource("direct");
+            setStreamError("");
+          } else {
+            setStreamError(
+              data.message || "Video is not available for this lecture yet."
+            );
+          }
+        }
+      } catch (err: any) {
+        if (!isMounted) return;
+        if (currentLecture.videoUrl) {
+          setStreamVideoUrl(currentLecture.videoUrl);
+          setStreamSource("direct");
+        } else {
+          setStreamError("Unable to load this video. Please try again.");
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoadingStream(false);
+        }
+      }
+    };
+
+    fetchPlayUrl();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [course._id, currentLecture?._id]);
 
   // Resume playback position
   useEffect(() => {
@@ -180,6 +258,45 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
 
   const isCompleted = enrollment?.completedLectures.includes(currentLectureId);
 
+  // Safe Empty Curriculum State (No sections or no lectures)
+  if (allLectures.length === 0 || !currentLecture) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+        <header className="h-14 bg-slate-900 border-b border-slate-800 px-4 flex items-center justify-between">
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold transition-colors cursor-pointer"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            <span>Return to Catalog</span>
+          </button>
+          <div className="text-xs font-mono text-slate-400">
+            {course.title}
+          </div>
+        </header>
+
+        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center max-w-lg mx-auto space-y-4 animate-in fade-in">
+          <div className="w-16 h-16 rounded-2xl bg-indigo-950/60 border border-indigo-800/50 flex items-center justify-center text-indigo-400 shadow-xl">
+            <Film className="w-8 h-8" />
+          </div>
+          <h2 className="text-xl font-bold text-white">
+            Curriculum Content Being Prepared
+          </h2>
+          <p className="text-sm text-slate-400 leading-relaxed">
+            The instructor ({course.instructorName}) has not published video lectures for this batch yet.
+            Please check back shortly or reach out to the course instructor.
+          </p>
+          <button
+            onClick={onBack}
+            className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer"
+          >
+            Back to My Courses
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
       {/* Top Learning Bar */}
@@ -240,109 +357,144 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
         <div className="flex-1 flex flex-col overflow-y-auto bg-slate-950">
           {/* Video Container */}
           <div className="relative aspect-video bg-black w-full flex items-center justify-center group">
-            <video
-              ref={videoRef}
-              src={currentLecture.videoUrl}
-              onTimeUpdate={handleTimeUpdate}
-              onEnded={() => {
-                setIsPlaying(false);
-                markLectureComplete(course._id, currentLectureId);
-              }}
-              onClick={togglePlay}
-              className="w-full h-full object-contain cursor-pointer"
-            />
-
-            {/* S3 Security Watermark Badge */}
-            <div className="absolute top-3 left-3 bg-slate-900/85 backdrop-blur-md px-2.5 py-1 rounded-md text-[10px] font-mono text-emerald-400 flex items-center gap-1.5 border border-emerald-500/20 shadow-md">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-              <span>AWS S3 Presigned Stream • Encrypted Signed URL</span>
-            </div>
-
-            {/* Custom Control Overlay */}
-            <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-3 sm:p-4 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-              {/* Progress Slider */}
-              <input
-                type="range"
-                min={0}
-                max={duration || 100}
-                value={currentTime}
-                onChange={handleSeek}
-                className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500 mb-3"
-              />
-
-              <div className="flex items-center justify-between text-xs text-white">
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={togglePlay}
-                    className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors"
-                  >
-                    {isPlaying ? (
-                      <Pause className="w-4 h-4 fill-white" />
-                    ) : (
-                      <Play className="w-4 h-4 fill-white ml-0.5" />
-                    )}
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      if (videoRef.current) {
-                        videoRef.current.currentTime = Math.max(
-                          0,
-                          videoRef.current.currentTime - 10
-                        );
-                      }
-                    }}
-                    className="text-slate-300 hover:text-white"
-                    title="Rewind 10s"
-                  >
-                    <RotateCcw className="w-4 h-4" />
-                  </button>
-
-                  <div className="text-slate-300 font-mono text-[11px]">
-                    {formatTime(currentTime)} / {formatTime(duration)}
-                  </div>
-
-                  <button
-                    onClick={handleToggleMute}
-                    className="text-slate-300 hover:text-white"
-                  >
-                    {isMuted ? (
-                      <VolumeX className="w-4 h-4 text-rose-400" />
-                    ) : (
-                      <Volume2 className="w-4 h-4" />
-                    )}
-                  </button>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  {/* Speed Selector */}
-                  <div className="flex items-center gap-1 bg-slate-800/80 px-2 py-1 rounded-md text-[11px] font-semibold">
-                    <span className="text-slate-400">Speed:</span>
-                    {[0.75, 1, 1.25, 1.5, 2].map((speed) => (
-                      <button
-                        key={speed}
-                        onClick={() => changePlaybackSpeed(speed)}
-                        className={`px-1 rounded-sm ${
-                          playbackSpeed === speed
-                            ? "bg-indigo-600 text-white font-bold"
-                            : "text-slate-400 hover:text-white"
-                        }`}
-                      >
-                        {speed}x
-                      </button>
-                    ))}
-                  </div>
-
-                  <button
-                    onClick={handleFullscreen}
-                    className="text-slate-300 hover:text-white"
-                    title="Fullscreen"
-                  >
-                    <Maximize className="w-4 h-4" />
-                  </button>
-                </div>
+            {isLoadingStream ? (
+              <div className="flex flex-col items-center justify-center gap-3 text-slate-400">
+                <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                <span className="text-xs font-mono">Authorizing Secure Cloudinary Stream...</span>
               </div>
-            </div>
+            ) : streamError ? (
+              <div className="p-6 text-center max-w-md space-y-3">
+                <AlertCircle className="w-10 h-10 text-amber-500 mx-auto" />
+                <h3 className="text-sm font-bold text-white">Video Unavailable</h3>
+                <p className="text-xs text-slate-400">{streamError}</p>
+                <button
+                  onClick={() => {
+                    setCurrentLectureId((prev) => prev);
+                  }}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded-lg transition-colors cursor-pointer"
+                >
+                  Retry Loading
+                </button>
+              </div>
+            ) : streamVideoUrl ? (
+              <>
+                <video
+                  ref={videoRef}
+                  src={streamVideoUrl}
+                  onTimeUpdate={handleTimeUpdate}
+                  onError={() => {
+                    setStreamError("Unable to load this video. Please try again.");
+                  }}
+                  onEnded={() => {
+                    setIsPlaying(false);
+                    markLectureComplete(course._id, currentLectureId);
+                  }}
+                  onClick={togglePlay}
+                  className="w-full h-full object-contain cursor-pointer"
+                />
+
+                {/* Cloudinary Secure Stream Watermark */}
+                <div className="absolute top-3 left-3 bg-slate-900/85 backdrop-blur-md px-2.5 py-1 rounded-md text-[10px] font-mono text-emerald-400 flex items-center gap-1.5 border border-emerald-500/20 shadow-md">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>
+                    {streamSource === "cloudinary"
+                      ? "Cloudinary • Authorized Secure Stream"
+                      : "Direct Video Stream"}
+                  </span>
+                </div>
+
+                {/* Custom Control Overlay */}
+                <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-3 sm:p-4 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                  {/* Progress Slider */}
+                  <input
+                    type="range"
+                    min={0}
+                    max={duration || 100}
+                    value={currentTime}
+                    onChange={handleSeek}
+                    className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500 mb-3"
+                  />
+
+                  <div className="flex items-center justify-between text-xs text-white">
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={togglePlay}
+                        className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors cursor-pointer"
+                      >
+                        {isPlaying ? (
+                          <Pause className="w-4 h-4 fill-white" />
+                        ) : (
+                          <Play className="w-4 h-4 fill-white ml-0.5" />
+                        )}
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          if (videoRef.current) {
+                            videoRef.current.currentTime = Math.max(
+                              0,
+                              videoRef.current.currentTime - 10
+                            );
+                          }
+                        }}
+                        className="text-slate-300 hover:text-white cursor-pointer"
+                        title="Rewind 10s"
+                      >
+                        <RotateCcw className="w-4 h-4" />
+                      </button>
+
+                      <div className="text-slate-300 font-mono text-[11px]">
+                        {formatTime(currentTime)} / {formatTime(duration)}
+                      </div>
+
+                      <button
+                        onClick={handleToggleMute}
+                        className="text-slate-300 hover:text-white cursor-pointer"
+                      >
+                        {isMuted ? (
+                          <VolumeX className="w-4 h-4 text-rose-400" />
+                        ) : (
+                          <Volume2 className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      {/* Speed Selector */}
+                      <div className="flex items-center gap-1 bg-slate-800/80 px-2 py-1 rounded-md text-[11px] font-semibold">
+                        <span className="text-slate-400">Speed:</span>
+                        {[0.75, 1, 1.25, 1.5, 2].map((speed) => (
+                          <button
+                            key={speed}
+                            onClick={() => changePlaybackSpeed(speed)}
+                            className={`px-1 rounded-sm cursor-pointer ${
+                              playbackSpeed === speed
+                                ? "bg-indigo-600 text-white font-bold"
+                                : "text-slate-400 hover:text-white"
+                            }`}
+                          >
+                            {speed}x
+                          </button>
+                        ))}
+                      </div>
+
+                      <button
+                        onClick={handleFullscreen}
+                        className="text-slate-300 hover:text-white cursor-pointer"
+                        title="Fullscreen"
+                      >
+                        <Maximize className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="p-6 text-center max-w-md space-y-2 text-slate-400">
+                <Film className="w-8 h-8 mx-auto text-slate-500" />
+                <p className="text-xs">No video stream loaded.</p>
+              </div>
+            )}
           </div>
 
           {/* Lecture Header & Navigation Buttons */}
@@ -449,17 +601,17 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
 
                 <div className="pt-4 border-t border-slate-800/80 space-y-3">
                   <h4 className="text-xs font-bold text-indigo-300 uppercase tracking-wider">
-                    S3 Storage Metadata
+                    Cloudinary Video Delivery Metadata
                   </h4>
                   <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 text-xs font-mono text-slate-300 space-y-1">
                     <div>
-                      <span className="text-slate-500">S3 Key:</span> {currentLecture.s3Key}
+                      <span className="text-slate-500">Public ID:</span> {currentLecture.videoPublicId || currentLecture.videoKey || "Direct Delivery"}
                     </div>
                     <div>
-                      <span className="text-slate-500">Stream Protocol:</span> HLS / Signed HTTP Byte-Range MP4
+                      <span className="text-slate-500">Stream Protocol:</span> Cloudinary Signed Adaptive HTTPS
                     </div>
                     <div>
-                      <span className="text-slate-500">Signed URL Expiry:</span> 900 seconds (15 min TTL)
+                      <span className="text-slate-500">Delivery Status:</span> Active & Authenticated
                     </div>
                   </div>
                 </div>

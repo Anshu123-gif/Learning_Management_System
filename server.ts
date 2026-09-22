@@ -15,6 +15,11 @@ import { MongoEnrollment } from "./server/models/Enrollment.js";
 import { MongoCourse } from "./server/models/Course.js";
 import { fulfillEnrollmentAndPayment } from "./api/payments.js";
 import { createCourseInDb, getCoursesFromDb, updateCourseStatusInDb } from "./api/courses.js";
+import { updateCourseCurriculumInDb } from "./server/curriculumService.js";
+import {
+  generateCloudinaryUploadSignature,
+  generateCloudinaryPlayUrl,
+} from "./server/videoService.js";
 import {
   requireAuth,
   requireRole,
@@ -743,6 +748,106 @@ async function startServer() {
         return res.status(statusCode).json({
           success: false,
           message: err.message || "Failed to update course status in MongoDB.",
+        });
+      }
+    }
+  );
+
+  // PUT /api/courses/:id/curriculum: Update sections & lectures in MongoDB
+  app.put(
+    "/api/courses/:id/curriculum",
+    requireAuth,
+    async (req: any, res) => {
+      try {
+        const courseId = req.params.id;
+        const { sections } = req.body;
+        const user = req.user;
+
+        if (!Array.isArray(sections)) {
+          return res.status(400).json({
+            success: false,
+            message: "sections must be an array of sections.",
+          });
+        }
+
+        const result = await updateCourseCurriculumInDb(
+          courseId,
+          sections,
+          user.userId,
+          user.role
+        );
+        return res.json(result);
+      } catch (err: any) {
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({
+          success: false,
+          message: err.message || "Failed to update curriculum in MongoDB.",
+        });
+      }
+    }
+  );
+
+  // POST /api/videos/upload-signature: Cloudinary upload signature for direct browser upload
+  const handleUploadSignature = async (req: any, res: any) => {
+    try {
+      const { courseId, lectureId } = req.body;
+      const user = req.user;
+
+      const result = await generateCloudinaryUploadSignature({
+        courseId,
+        lectureId,
+        userId: user.userId,
+        userRole: user.role,
+      });
+
+      return res.json(result);
+    } catch (err: any) {
+      const statusCode = err.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        message: err.message || "Failed to generate Cloudinary upload signature.",
+      });
+    }
+  };
+
+  app.post(
+    "/api/videos/upload-signature",
+    requireAuth,
+    requireRole("teacher", "admin"),
+    handleUploadSignature
+  );
+
+  // Alias endpoint for backwards compatibility
+  app.post(
+    "/api/videos/upload-url",
+    requireAuth,
+    requireRole("teacher", "admin"),
+    handleUploadSignature
+  );
+
+  // GET /api/videos/play-url: Authorized secure playback URL for Cloudinary stream
+  app.get(
+    "/api/videos/play-url",
+    requireAuth,
+    async (req: any, res) => {
+      try {
+        const courseId = (req.query.courseId as string) || "";
+        const lectureId = (req.query.lectureId as string) || "";
+        const user = req.user;
+
+        const result = await generateCloudinaryPlayUrl({
+          courseId,
+          lectureId,
+          userId: user.userId,
+          userRole: user.role,
+        });
+
+        return res.json(result);
+      } catch (err: any) {
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({
+          success: false,
+          message: err.message || "Failed to generate video stream URL.",
         });
       }
     }
