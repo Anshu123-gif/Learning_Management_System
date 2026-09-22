@@ -41,6 +41,8 @@ export const SheryiansHero: React.FC<SheryiansHeroProps> = ({
   const categories = ["All", "Web Development", "Frontend", "Cloud & DevOps", "System Design"];
 
   const filteredCourses = courses.filter((c) => {
+    // Only approved courses should ever appear in the public / student catalog
+    if (c.status !== "approved") return false;
     if (activeCategory === "All") return true;
     return c.category === activeCategory;
   });

@@ -134,6 +134,70 @@ export async function createCourseInDb(input: CreateCourseInput, authenticatedUs
 }
 
 /**
+ * Shared service helper for updating course status (approval/rejection) in MongoDB.
+ * Enforces admin authority, exact courseId targeting, and validates allowed status values.
+ */
+export async function updateCourseStatusInDb(
+  courseId: string,
+  newStatus: "approved" | "rejected",
+  rejectionReason?: string
+) {
+  const connected = await connectMongoDB();
+  if (!connected) {
+    const err: any = new Error("Database service unavailable. MongoDB not connected.");
+    err.statusCode = 503;
+    throw err;
+  }
+
+  if (!courseId || typeof courseId !== "string") {
+    const err: any = new Error("Course ID is required.");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  if (newStatus !== "approved" && newStatus !== "rejected") {
+    const err: any = new Error("Invalid status. Allowed values are 'approved' or 'rejected'.");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const updateFields: any = {
+    status: newStatus,
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (newStatus === "rejected") {
+    updateFields.rejectionReason = rejectionReason || "Course content requires revisions.";
+  } else {
+    updateFields.rejectionReason = "";
+  }
+
+  // Target exact courseId (or _id fallback)
+  const updatedCourse = await MongoCourse.findOneAndUpdate(
+    { $or: [{ courseId: courseId }, { _id: courseId }] },
+    { $set: updateFields },
+    { new: true }
+  ).lean();
+
+  if (!updatedCourse) {
+    const err: any = new Error(`Course with ID "${courseId}" not found in MongoDB.`);
+    err.statusCode = 404;
+    throw err;
+  }
+
+  console.log(`✅ [Course Status Updated] "${updatedCourse.title}" (${updatedCourse.courseId}) -> ${newStatus}`);
+
+  return {
+    success: true,
+    message: `Course status successfully updated to "${newStatus}".`,
+    course: {
+      ...updatedCourse,
+      _id: updatedCourse.courseId || updatedCourse._id,
+    },
+  };
+}
+
+/**
  * Shared service helper for querying courses from MongoDB.
  * Shared between Vercel Serverless (/api/courses.ts) and Express server (server.ts).
  */
@@ -211,7 +275,7 @@ export async function getCoursesFromDb(filterOptions: {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS headers
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
   if (req.method === "OPTIONS") {
@@ -297,6 +361,67 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(statusCode).json({
         success: false,
         message: err.message || "Failed to create course in MongoDB.",
+      });
+    }
+  }
+
+  // 3. PATCH /api/courses: Admin Course Status Approval/Rejection
+  if (req.method === "PATCH") {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({
+          success: false,
+          message: "Authentication required. Please provide a valid Bearer token.",
+        });
+      }
+
+      const token = authHeader.split(" ")[1];
+      let decoded: any;
+      try {
+        decoded = jwt.verify(token, JWT_SECRET);
+      } catch {
+        return res.status(401).json({
+          success: false,
+          message: "Invalid or expired session token.",
+        });
+      }
+
+      if (!decoded || !decoded.userId || !decoded.role) {
+        return res.status(401).json({
+          success: false,
+          message: "Invalid session token payload.",
+        });
+      }
+
+      // Enforce strict admin role
+      if (decoded.role !== "admin") {
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden. Only administrators can update course review status.",
+        });
+      }
+
+      let body = req.body;
+      if (typeof body === "string") {
+        try {
+          body = JSON.parse(body);
+        } catch {
+          // ignore
+        }
+      }
+
+      const courseId = (req.query?.id as string) || body?.courseId;
+      const { status, rejectionReason } = body || {};
+
+      const result = await updateCourseStatusInDb(courseId, status, rejectionReason);
+      return res.status(200).json(result);
+    } catch (err: any) {
+      console.error("[Vercel /api/courses] PATCH Error:", err);
+      const statusCode = err.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        message: err.message || "Failed to update course status in MongoDB.",
       });
     }
   }

@@ -80,7 +80,13 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [courses, setCourses] = useState<Course[]>(() => {
     const saved = localStorage.getItem("edupulse_courses");
-    return saved ? JSON.parse(saved) : INITIAL_COURSES;
+    const rawList: Course[] = saved ? JSON.parse(saved) : INITIAL_COURSES;
+    // If not teacher or admin, do not initialize with pending or rejected courses
+    const isTeacherOrAdmin = currentUser?.role === "teacher" || currentUser?.role === "admin";
+    if (!isTeacherOrAdmin) {
+      return rawList.filter((c) => c.status === "approved");
+    }
+    return rawList;
   });
 
   const [enrollments, setEnrollments] = useState<Enrollment[]>(() => {
@@ -144,38 +150,48 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem("edupulse_payments", JSON.stringify(payments));
   }, [payments]);
 
-  // Fetch courses from MongoDB on mount (merging with existing mock/local courses without deleting them)
-  useEffect(() => {
-    const fetchMongoCourses = async () => {
-      try {
-        const token = localStorage.getItem("edupulse_jwt_token");
-        const headers: Record<string, string> = {};
-        if (token) {
-          headers["Authorization"] = `Bearer ${token}`;
-        }
-        // If teacher/admin, request all courses so they see their drafts & pending
-        const url = currentUser?.role === "teacher" || currentUser?.role === "admin"
-          ? "/api/courses?all=true"
-          : "/api/courses";
+  // Fetch courses from MongoDB on mount
+  // For students and public visitors: MongoDB approved courses are the authoritative source of truth.
+  // We do NOT merge pending/draft/rejected localStorage courses into public/student view.
+  const fetchMongoCourses = async () => {
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      // If teacher/admin, request all courses so they see their drafts & pending
+      const isTeacherOrAdmin = currentUser?.role === "teacher" || currentUser?.role === "admin";
+      const url = isTeacherOrAdmin
+        ? "/api/courses?all=true"
+        : "/api/courses";
 
-        const res = await fetch(url, { headers });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success && Array.isArray(data.courses) && data.courses.length > 0) {
-            setCourses((prev) => {
-              const mongoCourses: Course[] = data.courses;
-              const mongoIds = new Set(mongoCourses.map((c) => c._id));
-              // Keep non-conflicting existing/mock courses, putting MongoDB courses first
+      const res = await fetch(url, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.courses)) {
+          const mongoCourses: Course[] = data.courses;
+          setCourses((prev) => {
+            const mongoIds = new Set(mongoCourses.map((c) => c._id));
+            if (!isTeacherOrAdmin) {
+              // Public / Student: MongoDB approved courses are the ONLY source of truth.
+              // Strictly exclude any pending/rejected courses that might linger in localStorage.
+              const validPrev = prev.filter((c) => !mongoIds.has(c._id) && c.status === "approved");
+              return [...mongoCourses, ...validPrev];
+            } else {
+              // Teacher / Admin: Keep non-conflicting courses while giving MongoDB priority
               const remainingPrev = prev.filter((c) => !mongoIds.has(c._id));
               return [...mongoCourses, ...remainingPrev];
-            });
-          }
+            }
+          });
         }
-      } catch (err) {
-        console.warn("Could not fetch courses from backend API:", err);
       }
-    };
+    } catch (err) {
+      console.warn("Could not fetch courses from backend API:", err);
+    }
+  };
 
+  useEffect(() => {
     fetchMongoCourses();
   }, [currentUser]);
 
@@ -183,13 +199,83 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return courses.find((c) => c._id === courseId);
   };
 
-  const approveCourse = (courseId: string) => {
+  const approveCourse = async (courseId: string) => {
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
+      const res = await fetch(`/api/courses/${courseId}/status`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ status: "approved" }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          // Update frontend state ONLY after backend successfully persists to MongoDB
+          setCourses((prev) =>
+            prev.map((c) => (c._id === courseId ? { ...c, status: "approved" as const } : c))
+          );
+          return { success: true };
+        }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        console.error("Backend course approval failed:", errData.message);
+      }
+    } catch (err) {
+      console.error("Error approving course on backend:", err);
+    }
+
+    // Fallback local update if network failed or offline
     setCourses((prev) =>
       prev.map((c) => (c._id === courseId ? { ...c, status: "approved" as const } : c))
     );
   };
 
-  const rejectCourse = (courseId: string, reason: string = "Course content requires revisions.") => {
+  const rejectCourse = async (courseId: string, reason: string = "Course content requires revisions.") => {
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
+      const res = await fetch(`/api/courses/${courseId}/status`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ status: "rejected", rejectionReason: reason }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          // Update frontend state ONLY after backend successfully persists to MongoDB
+          setCourses((prev) =>
+            prev.map((c) =>
+              c._id === courseId
+                ? { ...c, status: "rejected" as const, rejectionReason: reason }
+                : c
+            )
+          );
+          return { success: true };
+        }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        console.error("Backend course rejection failed:", errData.message);
+      }
+    } catch (err) {
+      console.error("Error rejecting course on backend:", err);
+    }
+
+    // Fallback local update if network failed or offline
     setCourses((prev) =>
       prev.map((c) =>
         c._id === courseId

@@ -14,7 +14,7 @@ import { MongoPayment } from "./server/models/Payment.js";
 import { MongoEnrollment } from "./server/models/Enrollment.js";
 import { MongoCourse } from "./server/models/Course.js";
 import { fulfillEnrollmentAndPayment } from "./api/payments.js";
-import { createCourseInDb, getCoursesFromDb } from "./api/courses.js";
+import { createCourseInDb, getCoursesFromDb, updateCourseStatusInDb } from "./api/courses.js";
 import {
   requireAuth,
   requireRole,
@@ -715,6 +715,38 @@ async function startServer() {
       });
     }
   });
+
+  // PATCH /api/courses/:id/status: Protected course approval/rejection endpoint
+  // Role: Only "admin" can call this endpoint
+  // Accepts only status: "approved" | "rejected" and optional rejectionReason
+  // Never trusts instructorId or role from the request body
+  app.patch(
+    "/api/courses/:id/status",
+    requireAuth,
+    requireRole("admin"),
+    async (req: any, res) => {
+      try {
+        const courseId = req.params.id;
+        const { status, rejectionReason } = req.body;
+
+        if (!status || (status !== "approved" && status !== "rejected")) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid status. Allowed values are 'approved' or 'rejected'.",
+          });
+        }
+
+        const result = await updateCourseStatusInDb(courseId, status, rejectionReason);
+        return res.json(result);
+      } catch (err: any) {
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({
+          success: false,
+          message: err.message || "Failed to update course status in MongoDB.",
+        });
+      }
+    }
+  );
 
   // AI Chatbot Route powered by Gemini
   const handleChat = async (req: express.Request, res: express.Response) => {
