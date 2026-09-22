@@ -52,6 +52,42 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   }
 
   const [activeTab, setActiveTab] = useState<"courses" | "users" | "payments">("courses");
+  const [processingCourseId, setProcessingCourseId] = useState<string | null>(null);
+  const [actionFeedback, setActionFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  const handleApprove = async (courseId: string) => {
+    setProcessingCourseId(courseId);
+    setActionFeedback(null);
+    try {
+      const res = await approveCourse(courseId);
+      if (res && res.success) {
+        setActionFeedback({ type: "success", message: res.message || "Course approved and published to live catalog!" });
+      } else {
+        setActionFeedback({ type: "error", message: res?.message || "Failed to approve course. Please check backend." });
+      }
+    } catch (e: any) {
+      setActionFeedback({ type: "error", message: e?.message || "Failed to execute course approval." });
+    } finally {
+      setProcessingCourseId(null);
+    }
+  };
+
+  const handleReject = async (courseId: string) => {
+    setProcessingCourseId(courseId);
+    setActionFeedback(null);
+    try {
+      const res = await rejectCourse(courseId, "Course requires revisions before approval.");
+      if (res && res.success) {
+        setActionFeedback({ type: "success", message: res.message || "Course rejected." });
+      } else {
+        setActionFeedback({ type: "error", message: res?.message || "Failed to reject course." });
+      }
+    } catch (e: any) {
+      setActionFeedback({ type: "error", message: e?.message || "Failed to execute course rejection." });
+    } finally {
+      setProcessingCourseId(null);
+    }
+  };
 
   // Filter pending courses
   const pendingCourses = courses.filter((c) => c.status === "pending");
@@ -240,6 +276,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
             </div>
 
+            {actionFeedback && (
+              <div
+                className={`p-3 rounded-xl text-xs flex items-center justify-between ${
+                  actionFeedback.type === "success"
+                    ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                    : "bg-rose-50 text-rose-800 border border-rose-200"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  {actionFeedback.type === "success" ? (
+                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                  ) : (
+                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                  )}
+                  <span>{actionFeedback.message}</span>
+                </div>
+                <button
+                  onClick={() => setActionFeedback(null)}
+                  className="text-slate-400 hover:text-slate-600 ml-3 font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
             {pendingCourses.length > 0 ? (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
@@ -284,14 +345,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                               Inspect
                             </button>
                             <button
-                              onClick={() => approveCourse(course._id)}
-                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs flex items-center gap-1 shadow-2xs"
+                              disabled={processingCourseId === course._id}
+                              onClick={() => handleApprove(course._id)}
+                              className={`px-3 py-1.5 font-bold rounded-lg text-xs flex items-center gap-1 shadow-2xs transition-all ${
+                                processingCourseId === course._id
+                                  ? "bg-emerald-400 text-white cursor-not-allowed opacity-75"
+                                  : "bg-emerald-600 hover:bg-emerald-700 text-white"
+                              }`}
                             >
-                              <CheckCircle className="w-3.5 h-3.5" /> Approve
+                              {processingCourseId === course._id ? (
+                                <>
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Approving...
+                                </>
+                              ) : (
+                                <>
+                                  <CheckCircle className="w-3.5 h-3.5" /> Approve
+                                </>
+                              )}
                             </button>
                             <button
-                              onClick={() => rejectCourse(course._id)}
-                              className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold rounded-lg text-xs flex items-center gap-1"
+                              disabled={processingCourseId === course._id}
+                              onClick={() => handleReject(course._id)}
+                              className={`px-2.5 py-1.5 font-semibold rounded-lg text-xs flex items-center gap-1 transition-all ${
+                                processingCourseId === course._id
+                                  ? "bg-slate-100 text-slate-400 cursor-not-allowed"
+                                  : "bg-rose-50 hover:bg-rose-100 text-rose-700"
+                              }`}
                             >
                               <XCircle className="w-3.5 h-3.5" /> Reject
                             </button>

@@ -411,8 +411,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
 
-      const courseId = (req.query?.id as string) || body?.courseId;
+      // Robust extraction of courseId from query params, vercel path rewrites, or body:
+      // 1. req.query?.id (e.g. /api/courses?id=course_xxx)
+      // 2. req.query?.path (e.g. from vercel.json rewrite /api/courses/:path* -> /api/courses?path=:path*)
+      //    Matches cases like "course_123/status", "course_123", or array ["course_123", "status"]
+      // 3. raw req.url segment (e.g. /api/courses/course_123/status)
+      // 4. body?.courseId or body?.id
+      let courseId = (req.query?.id as string) || "";
+      
+      if (!courseId && req.query?.path) {
+        if (Array.isArray(req.query.path)) {
+          courseId = req.query.path[0];
+        } else if (typeof req.query.path === "string") {
+          courseId = req.query.path.split("/")[0];
+        }
+      }
+
+      if (!courseId && req.url) {
+        const urlWithoutQuery = req.url.split("?")[0];
+        const match = urlWithoutQuery.match(/\/api\/courses\/([^/]+)/);
+        if (match && match[1] && match[1] !== "status") {
+          courseId = match[1];
+        }
+      }
+
+      if (!courseId) {
+        courseId = body?.courseId || body?.id || "";
+      }
+
       const { status, rejectionReason } = body || {};
+
+      if (!courseId) {
+        return res.status(400).json({
+          success: false,
+          message: "Course ID is required to update course review status.",
+        });
+      }
 
       const result = await updateCourseStatusInDb(courseId, status, rejectionReason);
       return res.status(200).json(result);

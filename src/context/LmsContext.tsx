@@ -34,8 +34,8 @@ interface LmsContextType {
   
   // Course actions
   getCourseById: (courseId: string) => Course | undefined;
-  approveCourse: (courseId: string) => void;
-  rejectCourse: (courseId: string, reason?: string) => void;
+  approveCourse: (courseId: string) => Promise<{ success: boolean; course?: Course; message?: string }>;
+  rejectCourse: (courseId: string, reason?: string) => Promise<{ success: boolean; course?: Course; message?: string }>;
   createCourse: (newCourse: Partial<Course>) => Promise<{ success: boolean; course?: Course; message?: string }>;
   addCourse: (newCourse: Partial<Course>) => Promise<{ success: boolean; course?: Course; message?: string }>;
   addSectionToCourse: (courseId: string, title: string) => Section;
@@ -215,27 +215,33 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         body: JSON.stringify({ status: "approved" }),
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          // Update frontend state ONLY after backend successfully persists to MongoDB
-          setCourses((prev) =>
-            prev.map((c) => (c._id === courseId ? { ...c, status: "approved" as const } : c))
-          );
-          return { success: true };
-        }
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        console.error("Backend course approval failed:", errData.message);
-      }
-    } catch (err) {
-      console.error("Error approving course on backend:", err);
-    }
+      const data = await res.json().catch(() => ({}));
 
-    // Fallback local update if network failed or offline
-    setCourses((prev) =>
-      prev.map((c) => (c._id === courseId ? { ...c, status: "approved" as const } : c))
-    );
+      if (res.ok && data.success) {
+        // Update frontend state ONLY after backend successfully persists to MongoDB
+        setCourses((prev) =>
+          prev.map((c) => (c._id === courseId ? { ...c, status: "approved" as const, rejectionReason: "" } : c))
+        );
+        return {
+          success: true,
+          course: data.course,
+          message: data.message || "Course approved successfully.",
+        };
+      } else {
+        const errorMsg = data.message || `Approval failed with status ${res.status}.`;
+        console.error("Backend course approval failed:", errorMsg);
+        return {
+          success: false,
+          message: errorMsg,
+        };
+      }
+    } catch (err: any) {
+      console.error("Error approving course on backend:", err);
+      return {
+        success: false,
+        message: err.message || "Network error. Failed to reach course approval service.",
+      };
+    }
   };
 
   const rejectCourse = async (courseId: string, reason: string = "Course content requires revisions.") => {
@@ -254,35 +260,37 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         body: JSON.stringify({ status: "rejected", rejectionReason: reason }),
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          // Update frontend state ONLY after backend successfully persists to MongoDB
-          setCourses((prev) =>
-            prev.map((c) =>
-              c._id === courseId
-                ? { ...c, status: "rejected" as const, rejectionReason: reason }
-                : c
-            )
-          );
-          return { success: true };
-        }
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        console.error("Backend course rejection failed:", errData.message);
-      }
-    } catch (err) {
-      console.error("Error rejecting course on backend:", err);
-    }
+      const data = await res.json().catch(() => ({}));
 
-    // Fallback local update if network failed or offline
-    setCourses((prev) =>
-      prev.map((c) =>
-        c._id === courseId
-          ? { ...c, status: "rejected" as const, rejectionReason: reason }
-          : c
-      )
-    );
+      if (res.ok && data.success) {
+        // Update frontend state ONLY after backend successfully persists to MongoDB
+        setCourses((prev) =>
+          prev.map((c) =>
+            c._id === courseId
+              ? { ...c, status: "rejected" as const, rejectionReason: reason }
+              : c
+          )
+        );
+        return {
+          success: true,
+          course: data.course,
+          message: data.message || "Course rejected.",
+        };
+      } else {
+        const errorMsg = data.message || `Rejection failed with status ${res.status}.`;
+        console.error("Backend course rejection failed:", errorMsg);
+        return {
+          success: false,
+          message: errorMsg,
+        };
+      }
+    } catch (err: any) {
+      console.error("Error rejecting course on backend:", err);
+      return {
+        success: false,
+        message: err.message || "Network error. Failed to reach course rejection service.",
+      };
+    }
   };
 
   const createCourse = async (newCourse: Partial<Course>) => {
