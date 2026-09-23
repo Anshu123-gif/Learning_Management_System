@@ -8,6 +8,9 @@ export interface IEnrollment {
   courseTitle: string;
   progressPercent: number;
   completedLectures: string[];
+  lastWatchedLectureId?: string;
+  lastWatchedPositionSeconds?: number;
+  lecturePositions?: Record<string, number>;
   paymentId: string;
   razorpayOrderId: string;
   razorpayPaymentId: string;
@@ -28,6 +31,9 @@ const EnrollmentSchema = new Schema<IEnrollmentDocument>(
     courseTitle: { type: String, required: true },
     progressPercent: { type: Number, default: 0 },
     completedLectures: { type: [String], default: [] },
+    lastWatchedLectureId: { type: String, default: "" },
+    lastWatchedPositionSeconds: { type: Number, default: 0 },
+    lecturePositions: { type: Map, of: Number, default: {} },
     paymentId: { type: String, required: true },
     razorpayOrderId: { type: String, required: true, index: true },
     razorpayPaymentId: { type: String, required: true, unique: true, index: true },

@@ -142,6 +142,7 @@ export interface Enrollment {
   completedLectures: string[]; // Lecture IDs
   lastWatchedLectureId?: string;
   lastWatchedPositionSeconds?: number;
+  lecturePositions?: Record<string, number>;
   paymentId: string;
   enrolledAt: string;
   certificateIssued: boolean;

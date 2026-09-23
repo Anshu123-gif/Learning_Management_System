@@ -912,6 +912,63 @@ async function startServer() {
     }
   );
 
+  // POST /api/videos/progress: Persist video watch position and completion in MongoDB
+  app.post(
+    "/api/videos/progress",
+    requireAuth,
+    async (req: any, res) => {
+      try {
+        const { courseId, lectureId, positionSeconds, completed } = req.body;
+        const user = req.user;
+
+        if (!courseId || !lectureId) {
+          return res.status(400).json({ success: false, message: "courseId and lectureId are required." });
+        }
+
+        const connected = await connectMongoDB();
+        if (connected) {
+          const enrollment = await MongoEnrollment.findOne({ courseId, studentId: user.userId });
+          if (enrollment) {
+            enrollment.lastWatchedLectureId = lectureId;
+            const pos = Math.max(0, Math.round(Number(positionSeconds) || 0));
+            enrollment.lastWatchedPositionSeconds = pos;
+            if (!enrollment.lecturePositions) {
+              enrollment.lecturePositions = new Map() as any;
+            }
+            (enrollment as any).set(`lecturePositions.${lectureId}`, pos);
+
+            if (completed && !enrollment.completedLectures.includes(lectureId)) {
+              enrollment.completedLectures.push(lectureId);
+              try {
+                const course = await MongoCourse.findOne({ courseId }).lean();
+                if (course && Array.isArray((course as any).sections)) {
+                  const totalLectures = (course as any).sections.flatMap((s: any) => s.lectures || []).length || 1;
+                  enrollment.progressPercent = Math.min(100, Math.round((enrollment.completedLectures.length / totalLectures) * 100));
+                }
+              } catch {}
+            }
+            await enrollment.save();
+            return res.json({
+              success: true,
+              lastWatchedLectureId: enrollment.lastWatchedLectureId,
+              lastWatchedPositionSeconds: enrollment.lastWatchedPositionSeconds,
+              completedLectures: enrollment.completedLectures,
+              progressPercent: enrollment.progressPercent,
+            });
+          }
+        }
+
+        return res.json({ success: true, savedLocally: true });
+      } catch (err: any) {
+        console.error("Error persisting video progress:", err);
+        return res.status(500).json({
+          success: false,
+          message: err.message || "Failed to persist video progress.",
+        });
+      }
+    }
+  );
+
   // AI Chatbot Route powered by Gemini
   const handleChat = async (req: express.Request, res: express.Response) => {
     try {

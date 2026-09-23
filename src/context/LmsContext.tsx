@@ -602,20 +602,65 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
       })
     );
+
+    // Persist completion to backend API if authenticated
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      if (token) {
+        fetch("/api/videos/progress", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            courseId,
+            lectureId,
+            completed: true,
+          }),
+        }).catch(() => {});
+      }
+    } catch {}
   };
 
   const saveVideoProgress = (courseId: string, lectureId: string, seconds: number) => {
     if (!currentUser) return;
+    const pos = Math.max(0, Math.round(seconds));
+
     setEnrollments((prev) =>
       prev.map((e) => {
         if (e.courseId !== courseId || e.studentId !== currentUser._id) return e;
+        const currentPositions = e.lecturePositions || {};
         return {
           ...e,
           lastWatchedLectureId: lectureId,
-          lastWatchedPositionSeconds: Math.round(seconds),
+          lastWatchedPositionSeconds: pos,
+          lecturePositions: {
+            ...currentPositions,
+            [lectureId]: pos,
+          },
         };
       })
     );
+
+    // Persist position to backend API if authenticated
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      if (token) {
+        fetch("/api/videos/progress", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            courseId,
+            lectureId,
+            positionSeconds: pos,
+          }),
+        }).catch(() => {});
+      }
+    } catch {}
   };
 
   const getQuizForCourse = (courseId: string) => {
