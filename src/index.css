@@ -20,3 +20,123 @@
 .sheryians-radial-glow {
   background: radial-gradient(circle at 50% 35%, rgba(232, 74, 39, 0.16) 0%, rgba(200, 50, 20, 0.05) 45%, transparent 75%);
 }
+
+html {
+  scroll-behavior: smooth;
+}
+
+@keyframes meshGradient {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.22;
+  }
+  50% {
+    transform: translate3d(-3%, 3%, 0) scale(1.08);
+    opacity: 0.32;
+  }
+}
+
+@keyframes subtleFloat {
+  0%, 100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -8px, 0);
+  }
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    opacity: 0.35;
+    transform: scale3d(1, 1, 1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale3d(1.05, 1.05, 1);
+  }
+}
+
+.animate-mesh-slow {
+  animation: meshGradient 14s ease-in-out infinite;
+}
+
+.animate-subtle-float {
+  animation: subtleFloat 6s ease-in-out infinite;
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .animate-mesh-slow,
+  .animate-subtle-float,
+  .animate-pulse-glow,
+  .animate-float-1,
+  .animate-float-2,
+  .animate-float-3,
+  .animate-marquee {
+    animation: none !important;
+  }
+}
+
+@keyframes floatVariation1 {
+  0%, 100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -5px, 0);
+  }
+}
+
+@keyframes floatVariation2 {
+  0%, 100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -7px, 0);
+  }
+}
+
+@keyframes floatVariation3 {
+  0%, 100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -4px, 0);
+  }
+}
+
+@keyframes marqueeScroll {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+.animate-float-1 {
+  animation: floatVariation1 5.5s ease-in-out infinite;
+}
+
+.animate-float-2 {
+  animation: floatVariation2 7s ease-in-out infinite;
+}
+
+.animate-float-3 {
+  animation: floatVariation3 6s ease-in-out infinite;
+}
+
+.animate-marquee {
+  display: flex;
+  width: max-content;
+  animation: marqueeScroll 36s linear infinite;
+}
+
+.animate-marquee:hover {
+  animation-play-state: paused;
+}

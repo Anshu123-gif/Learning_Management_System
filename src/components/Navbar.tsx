@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { motion, useScroll, useSpring, useReducedMotion } from "motion/react";
 import {
   GraduationCap,
   BookOpen,
@@ -41,6 +42,17 @@ export const Navbar: React.FC<NavbarProps> = ({
   const { currentUser, isAuthenticated, activeRole, logout, openAuthModal } = useAuth();
   const { certificates } = useLms();
   const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
+  const [isScrolled, setIsScrolled] = useState(false);
+
+  // Smooth scroll listener for premium glassmorphic navbar
+  React.useEffect(() => {
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 20);
+    };
+    handleScroll();
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
 
   // Normalize active tab
   const activeTab: NavTab =
@@ -70,8 +82,32 @@ export const Navbar: React.FC<NavbarProps> = ({
     ? certificates.filter((c) => c.studentId === currentUser._id).length
     : 0;
 
+  // Scroll Progress Indicator (smooth spring interpolation)
+  const { scrollYProgress } = useScroll();
+  const shouldReduceMotion = useReducedMotion();
+  const progressScaleX = useSpring(scrollYProgress, {
+    stiffness: 400,
+    damping: 40,
+    restDelta: 0.001,
+  });
+
   return (
-    <header className="sticky top-0 z-40 bg-[#0b0b0c]/90 backdrop-blur-md border-b border-neutral-800/80 shadow-xs">
+    <>
+      {/* Sleek Top Scroll Progress Indicator */}
+      {!shouldReduceMotion && (
+        <motion.div
+          style={{ scaleX: progressScaleX, transformOrigin: "0%" }}
+          className="fixed top-0 left-0 right-0 h-[2.5px] bg-gradient-to-r from-[#E84A27] via-amber-400 to-[#E84A27] z-50 pointer-events-none shadow-[0_0_8px_rgba(232,74,39,0.8)]"
+        />
+      )}
+
+      <header
+        className={`sticky top-0 z-40 transition-all duration-300 ${
+          isScrolled
+            ? "bg-[#0b0b0c]/90 backdrop-blur-md border-b border-neutral-800/80 shadow-lg shadow-black/40"
+            : "bg-transparent border-b border-transparent shadow-none"
+        }`}
+      >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-20 gap-4">
           {/* Logo & Brand: Sheryians Coding School */}
@@ -304,5 +340,6 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
       </div>
     </header>
+    </>
   );
 };

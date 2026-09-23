@@ -1,5 +1,6 @@
 import React from "react";
 import { Star, Users, Clock, PlayCircle, CheckCircle2, Bookmark } from "lucide-react";
+import { motion, useReducedMotion } from "motion/react";
 import { Course } from "../types";
 import { useLms } from "../context/LmsContext";
 import { useAuth } from "../context/AuthContext";
@@ -27,8 +28,52 @@ export const CourseCard: React.FC<CourseCardProps> = ({
     .flatMap((s) => s.lectures)
     .reduce((acc, l) => acc + (l.durationMinutes || 0), 0);
 
+  const shouldReduceMotion = useReducedMotion();
+  const cardRef = React.useRef<HTMLDivElement>(null);
+  const [tilt, setTilt] = React.useState({ rotateX: 0, rotateY: 0 });
+  const [isTouchDevice, setIsTouchDevice] = React.useState(false);
+
+  React.useEffect(() => {
+    if (typeof window !== "undefined") {
+      setIsTouchDevice(window.matchMedia("(hover: none) or (pointer: coarse)").matches);
+    }
+  }, []);
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (shouldReduceMotion || isTouchDevice || !cardRef.current) return;
+    const rect = cardRef.current.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width - 0.5;
+    const y = (e.clientY - rect.top) / rect.height - 0.5;
+    setTilt({
+      rotateX: -y * 6,
+      rotateY: x * 6,
+    });
+  };
+
+  const handleMouseLeave = () => {
+    setTilt({ rotateX: 0, rotateY: 0 });
+  };
+
   return (
-    <div className="bg-white rounded-2xl border border-slate-200/80 hover:border-indigo-300 shadow-2xs hover:shadow-xl transition-all duration-300 flex flex-col overflow-hidden group">
+    <motion.div
+      ref={cardRef}
+      initial={{ opacity: 0, y: shouldReduceMotion ? 0 : 30 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: "-30px" }}
+      transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+      style={{
+        transform:
+          shouldReduceMotion || isTouchDevice
+            ? undefined
+            : `perspective(1000px) rotateX(${tilt.rotateX}deg) rotateY(${tilt.rotateY}deg)`,
+        transition:
+          "transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease, border-color 0.3s ease",
+      }}
+      whileHover={shouldReduceMotion || isTouchDevice ? {} : { y: -4 }}
+      className="bg-white rounded-2xl border border-slate-200/80 hover:border-indigo-300 shadow-2xs hover:shadow-xl transition-all duration-300 flex flex-col overflow-hidden group will-change-transform"
+    >
       {/* Thumbnail */}
       <div className="relative aspect-video overflow-hidden bg-slate-100">
         <img
@@ -195,6 +240,6 @@ export const CourseCard: React.FC<CourseCardProps> = ({
           )}
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 };
