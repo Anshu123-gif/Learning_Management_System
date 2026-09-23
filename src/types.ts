@@ -59,6 +59,8 @@ export interface Course {
   category: string;
   level: CourseLevel;
   thumbnail: string;
+  thumbnailUrl?: string;
+  thumbnailPublicId?: string;
   price: number;
   originalPrice: number;
   status: CourseStatus;

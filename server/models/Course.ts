@@ -12,6 +12,8 @@ export interface ICourse {
   category?: string;
   level?: "Beginner" | "Intermediate" | "Advanced" | "All Levels";
   thumbnail?: string;
+  thumbnailUrl?: string;
+  thumbnailPublicId?: string;
   price: number;
   originalPrice?: number;
   status: "draft" | "pending" | "approved" | "rejected";
@@ -52,6 +54,14 @@ const CourseSchema = new Schema<ICourseDocument>(
       type: String,
       default: "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=800&auto=format&fit=crop&q=80",
     },
+    thumbnailUrl: {
+      type: String,
+      default: "",
+    },
+    thumbnailPublicId: {
+      type: String,
+      default: "",
+    },
     price: { type: Number, required: true, min: 0 },
     originalPrice: { type: Number, default: 0 },
     status: {
@@ -74,12 +84,16 @@ const CourseSchema = new Schema<ICourseDocument>(
     toJSON: {
       transform: (_doc, ret: any) => {
         ret._id = ret.courseId || ret._id;
+        ret.thumbnailUrl = ret.thumbnailUrl || ret.thumbnail;
+        ret.thumbnail = ret.thumbnail || ret.thumbnailUrl;
         return ret;
       },
     },
     toObject: {
       transform: (_doc, ret: any) => {
         ret._id = ret.courseId || ret._id;
+        ret.thumbnailUrl = ret.thumbnailUrl || ret.thumbnail;
+        ret.thumbnail = ret.thumbnail || ret.thumbnailUrl;
         return ret;
       },
     },

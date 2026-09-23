@@ -21,6 +21,10 @@ import {
   generateCloudinaryPlayUrl,
 } from "./server/videoService.js";
 import {
+  uploadCourseThumbnail,
+  deleteCourseThumbnail,
+} from "./server/thumbnailService.js";
+import {
   requireAuth,
   requireRole,
   requireOwnerOrAdmin,
@@ -39,11 +43,13 @@ async function startServer() {
 
   app.use(
     express.json({
+      limit: "10mb",
       verify: (req: any, _res, buf) => {
         req.rawBody = buf;
       },
     })
   );
+  app.use(express.urlencoded({ limit: "10mb", extended: true }));
 
   // Attempt connection to MongoDB Atlas
   connectMongoDB()
@@ -696,6 +702,59 @@ async function startServer() {
         return res.status(statusCode).json({
           success: false,
           message: err.message || "Failed to create course in MongoDB.",
+        });
+      }
+    }
+  );
+
+  // POST /api/courses/upload-thumbnail: Upload course thumbnail to Cloudinary via backend
+  // Role: Teacher or Admin only
+  // Validates file type (JPG, JPEG, PNG, WEBP) & max size (5 MB)
+  // Uploads to Cloudinary without exposing CLOUDINARY_API_SECRET
+  app.post(
+    "/api/courses/upload-thumbnail",
+    requireAuth,
+    requireRole("teacher", "admin"),
+    async (req: any, res) => {
+      try {
+        const { image, fileName } = req.body;
+        const result = await uploadCourseThumbnail({
+          image,
+          fileName,
+          userId: req.user.userId,
+          userRole: req.user.role,
+        });
+        return res.json(result);
+      } catch (err: any) {
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({
+          success: false,
+          message: err.message || "Failed to upload thumbnail to Cloudinary.",
+        });
+      }
+    }
+  );
+
+  // POST /api/courses/delete-thumbnail: Delete unsubmitted course thumbnail from Cloudinary
+  // Role: Teacher or Admin only
+  app.post(
+    "/api/courses/delete-thumbnail",
+    requireAuth,
+    requireRole("teacher", "admin"),
+    async (req: any, res) => {
+      try {
+        const { publicId } = req.body;
+        const result = await deleteCourseThumbnail({
+          publicId,
+          userId: req.user.userId,
+          userRole: req.user.role,
+        });
+        return res.json(result);
+      } catch (err: any) {
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({
+          success: false,
+          message: err.message || "Failed to remove thumbnail.",
         });
       }
     }

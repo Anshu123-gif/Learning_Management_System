@@ -6,9 +6,9 @@ import { v2 as cloudinary } from "cloudinary";
  * Secrets are NEVER exposed to the frontend client.
  */
 export function getCloudinaryConfig() {
-  const cloudName = process.env.CLOUDINARY_CLOUD_NAME?.trim() || "";
-  const apiKey = process.env.CLOUDINARY_API_KEY?.trim() || "";
-  const apiSecret = process.env.CLOUDINARY_API_SECRET?.trim() || "";
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME?.trim() || "iznihnwl";
+  const apiKey = process.env.CLOUDINARY_API_KEY?.trim() || "283574243466697";
+  const apiSecret = process.env.CLOUDINARY_API_SECRET?.trim() || "rHzzobP1Woplo-7-qWiAUpJ2FqQ";
 
   return {
     cloudName,

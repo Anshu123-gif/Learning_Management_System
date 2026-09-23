@@ -5,6 +5,7 @@ import { connectMongoDB } from "../server/db.js";
 import { MongoCourse } from "../server/models/Course.js";
 import { MongoUser } from "../server/models/User.js";
 import { updateCourseCurriculumInDb } from "../server/curriculumService.js";
+import { uploadCourseThumbnail, deleteCourseThumbnail } from "../server/thumbnailService.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "sheryians_lms_super_secure_jwt_secret_key_2025";
 
@@ -15,6 +16,8 @@ export interface CreateCourseInput {
   category?: string;
   level?: "Beginner" | "Intermediate" | "Advanced" | "All Levels" | string;
   thumbnail?: string;
+  thumbnailUrl?: string;
+  thumbnailPublicId?: string;
   price: number | string;
   originalPrice?: number | string;
   requirements?: string[];
@@ -42,6 +45,8 @@ export async function createCourseInDb(input: CreateCourseInput, authenticatedUs
     category,
     level,
     thumbnail,
+    thumbnailUrl,
+    thumbnailPublicId,
     price,
     originalPrice,
     requirements,
@@ -62,6 +67,16 @@ export async function createCourseInDb(input: CreateCourseInput, authenticatedUs
     const err: any = new Error("Valid non-negative price is required.");
     err.statusCode = 400;
     throw err;
+  }
+
+  // Sanitize thumbnail URL: Ensure raw base64/binary is NEVER persisted directly to MongoDB
+  let sanitizedThumbnail = (thumbnailUrl || thumbnail || "").trim();
+  if (sanitizedThumbnail.startsWith("data:")) {
+    // If base64 URI was accidentally passed, fallback to default placeholder
+    sanitizedThumbnail = "";
+  }
+  if (!sanitizedThumbnail) {
+    sanitizedThumbnail = "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=800&auto=format&fit=crop&q=80";
   }
 
   // 2. Fetch authoritative user from MongoDB using authenticatedUserId
@@ -88,9 +103,9 @@ export async function createCourseInDb(input: CreateCourseInput, authenticatedUs
     level: ["Beginner", "Intermediate", "Advanced", "All Levels"].includes(level as any)
       ? level
       : "Beginner",
-    thumbnail:
-      thumbnail ||
-      "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=800&auto=format&fit=crop&q=80",
+    thumbnail: sanitizedThumbnail,
+    thumbnailUrl: sanitizedThumbnail,
+    thumbnailPublicId: thumbnailPublicId?.trim() || "",
     price: numericPrice,
     originalPrice: originalPrice ? Number(originalPrice) : numericPrice * 2,
     status: "pending", // Newly created courses must NOT be automatically approved
@@ -364,6 +379,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         } catch {
           // ignore parsing error, pass as-is
         }
+      }
+
+      // Handle thumbnail actions if routed via /api/courses/upload-thumbnail or /api/courses?path=upload-thumbnail
+      const pathParam = Array.isArray(req.query?.path)
+        ? req.query.path.join("/")
+        : (req.query?.path as string) || "";
+      const rawUrl = req.url || "";
+      const isUploadThumbnail =
+        pathParam === "upload-thumbnail" || rawUrl.includes("/upload-thumbnail");
+      const isDeleteThumbnail =
+        pathParam === "delete-thumbnail" || rawUrl.includes("/delete-thumbnail");
+
+      if (isUploadThumbnail) {
+        const result = await uploadCourseThumbnail({
+          image: body?.image,
+          fileName: body?.fileName,
+          userId: decoded.userId,
+          userRole: decoded.role,
+        });
+        return res.status(200).json(result);
+      }
+
+      if (isDeleteThumbnail) {
+        const result = await deleteCourseThumbnail({
+          publicId: body?.publicId,
+          userId: decoded.userId,
+          userRole: decoded.role,
+        });
+        return res.status(200).json(result);
       }
 
       const result = await createCourseInDb(body, decoded.userId);

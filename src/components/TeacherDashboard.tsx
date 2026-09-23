@@ -15,6 +15,9 @@ import {
   CheckCircle,
   AlertCircle,
   FolderPlus,
+  Image as ImageIcon,
+  RefreshCw,
+  X,
 } from "lucide-react";
 import { Course, Lecture, Section } from "../types";
 import { useLms } from "../context/LmsContext";
@@ -81,7 +84,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const [newCourseCategory, setNewCourseCategory] = useState("Web Development");
   const [newCoursePrice, setNewCoursePrice] = useState("3499");
   const [newCourseLevel, setNewCourseLevel] = useState<"Beginner" | "Intermediate" | "Advanced">("Beginner");
-  const [newCourseThumbnail, setNewCourseThumbnail] = useState("https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=800&auto=format&fit=crop&q=60");
   const [newCourseLanguage, setNewCourseLanguage] = useState("English");
   const [newCourseRequirements, setNewCourseRequirements] = useState("Basic programming fundamentals");
   const [newCourseLearningOutcomes, setNewCourseLearningOutcomes] = useState("Build production web applications\nImplement secure APIs and database operations");
@@ -89,7 +91,18 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const [createCourseError, setCreateCourseError] = useState("");
   const [createCourseSuccess, setCreateCourseSuccess] = useState("");
 
-  // New Lecture Form
+  // Course Thumbnail Upload State (Cloudinary via Backend)
+  const [uploadedThumbnailUrl, setUploadedThumbnailUrl] = useState("");
+  const [uploadedThumbnailPublicId, setUploadedThumbnailPublicId] = useState("");
+  const [thumbnailPreviewUrl, setThumbnailPreviewUrl] = useState("");
+  const [thumbnailFileName, setThumbnailFileName] = useState("");
+  const [isUploadingThumbnail, setIsUploadingThumbnail] = useState(false);
+  const [thumbnailUploadProgress, setThumbnailUploadProgress] = useState(0);
+  const [thumbnailUploadStatus, setThumbnailUploadStatus] = useState("");
+  const [thumbnailError, setThumbnailError] = useState("");
+  const [isDraggingThumbnail, setIsDraggingThumbnail] = useState(false);
+
+  // New Lecture Form State
   const [selectedSectionId, setSelectedSectionId] = useState("");
   const [newSectionTitle, setNewSectionTitle] = useState("");
   const [newLectureTitle, setNewLectureTitle] = useState("");
@@ -101,9 +114,156 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const [uploadError, setUploadError] = useState("");
   const [cloudinaryUploadSuccess, setCloudinaryUploadSuccess] = useState(false);
 
+  const uploadThumbnailFile = async (file: File) => {
+    setThumbnailError("");
+
+    const allowedMimeTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    const fileType = file.type.toLowerCase();
+    const hasValidExtension = /\.(jpe?g|png|webp)$/i.test(file.name);
+
+    if (!allowedMimeTypes.includes(fileType) && !hasValidExtension) {
+      setThumbnailError("Unsupported file type. Please upload a JPG, JPEG, PNG, or WEBP image.");
+      return;
+    }
+
+    const MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
+    if (file.size > MAX_SIZE_BYTES) {
+      const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+      setThumbnailError(`File size (${sizeMB} MB) exceeds the maximum allowed limit of 5 MB.`);
+      return;
+    }
+
+    // Immediate local preview for responsive UI
+    const previewUrl = URL.createObjectURL(file);
+    setThumbnailPreviewUrl(previewUrl);
+    setThumbnailFileName(file.name);
+
+    // Clean up previously uploaded thumbnail in Cloudinary if teacher is replacing before submit
+    if (uploadedThumbnailPublicId) {
+      try {
+        const token = localStorage.getItem("token") || "";
+        fetch("/api/courses/delete-thumbnail", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ publicId: uploadedThumbnailPublicId }),
+        }).catch(() => {});
+      } catch {}
+    }
+
+    setIsUploadingThumbnail(true);
+    setThumbnailUploadProgress(25);
+    setThumbnailUploadStatus("Reading image file...");
+
+    try {
+      const dataUri: string = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error("Failed to read image file."));
+        reader.readAsDataURL(file);
+      });
+
+      setThumbnailUploadProgress(60);
+      setThumbnailUploadStatus("Uploading thumbnail to Cloudinary via backend...");
+
+      const token = localStorage.getItem("token") || "";
+      const res = await fetch("/api/courses/upload-thumbnail", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          image: dataUri,
+          fileName: file.name,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Failed to upload thumbnail to Cloudinary.");
+      }
+
+      setThumbnailUploadProgress(100);
+      setThumbnailUploadStatus("Thumbnail uploaded successfully!");
+      setUploadedThumbnailUrl(data.secure_url);
+      setUploadedThumbnailPublicId(data.public_id);
+      setThumbnailPreviewUrl(data.secure_url);
+    } catch (err: any) {
+      console.error("Thumbnail upload failed:", err);
+      setThumbnailError(err.message || "Failed to upload thumbnail. Please try again.");
+      setThumbnailPreviewUrl("");
+      setUploadedThumbnailUrl("");
+      setUploadedThumbnailPublicId("");
+    } finally {
+      setIsUploadingThumbnail(false);
+    }
+  };
+
+  const handleThumbnailFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      uploadThumbnailFile(e.target.files[0]);
+    }
+  };
+
+  const handleThumbnailDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingThumbnail(true);
+  };
+
+  const handleThumbnailDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingThumbnail(false);
+  };
+
+  const handleThumbnailDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingThumbnail(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      uploadThumbnailFile(e.dataTransfer.files[0]);
+    }
+  };
+
+  const handleRemoveThumbnail = async () => {
+    if (uploadedThumbnailPublicId) {
+      try {
+        const token = localStorage.getItem("token") || "";
+        await fetch("/api/courses/delete-thumbnail", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ publicId: uploadedThumbnailPublicId }),
+        });
+      } catch (err) {
+        console.warn("Could not delete thumbnail from Cloudinary:", err);
+      }
+    }
+    setUploadedThumbnailUrl("");
+    setUploadedThumbnailPublicId("");
+    setThumbnailPreviewUrl("");
+    setThumbnailFileName("");
+    setThumbnailError("");
+    setThumbnailUploadStatus("");
+  };
+
+  const handleCloseCreateCourseModal = () => {
+    if (isUploadingThumbnail || isSubmittingCourse) return;
+    // Clean up uploaded thumbnail in Cloudinary if modal was dismissed without submitting
+    if (uploadedThumbnailPublicId) {
+      handleRemoveThumbnail();
+    }
+    setShowCreateCourseModal(false);
+  };
+
   const handleCreateCourse = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCourseTitle.trim()) return;
+    if (isUploadingThumbnail) return;
 
     setIsSubmittingCourse(true);
     setCreateCourseError("");
@@ -119,6 +279,9 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
       .filter((o) => o.length > 0);
 
     const priceNum = parseInt(newCoursePrice) || 3499;
+    const finalThumbnail =
+      uploadedThumbnailUrl.trim() ||
+      "https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=800&auto=format&fit=crop&q=60";
 
     const res = await addCourse({
       title: newCourseTitle.trim(),
@@ -128,7 +291,9 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
       level: newCourseLevel,
       price: priceNum,
       originalPrice: priceNum * 2,
-      thumbnail: newCourseThumbnail.trim() || "https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=800&auto=format&fit=crop&q=60",
+      thumbnail: finalThumbnail,
+      thumbnailUrl: finalThumbnail,
+      thumbnailPublicId: uploadedThumbnailPublicId || "",
       language: newCourseLanguage.trim() || "English",
       requirements: reqList.length > 0 ? reqList : ["Basic programming fundamentals"],
       learningOutcomes: outcomesList.length > 0 ? outcomesList : ["Build end-to-end applications"],
@@ -147,6 +312,11 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
         setNewCourseTitle("");
         setNewCourseSubtitle("");
         setNewCourseDescription("");
+        setUploadedThumbnailUrl("");
+        setUploadedThumbnailPublicId("");
+        setThumbnailPreviewUrl("");
+        setThumbnailFileName("");
+        setThumbnailError("");
         setCreateCourseSuccess("");
       }, 1500);
     } else {
@@ -565,14 +735,25 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
       {/* Modal: Create New Course */}
       {showCreateCourseModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-xl w-full p-6 space-y-4 my-8 max-h-[90vh] overflow-y-auto">
-            <div>
-              <h3 className="text-base font-bold text-slate-900">
-                Create New Curriculum Course
-              </h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Submit course details to MongoDB. The course will be saved with <span className="font-semibold text-amber-600">status: "pending"</span> awaiting administrative approval before going live.
-              </p>
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-xl w-full p-6 space-y-4 my-8 max-h-[90vh] overflow-y-auto relative">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">
+                  Create New Curriculum Course
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Submit course details to MongoDB. The course will be saved with <span className="font-semibold text-amber-600">status: "pending"</span> awaiting administrative approval before going live.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={isSubmittingCourse || isUploadingThumbnail}
+                onClick={handleCloseCreateCourseModal}
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
 
             {createCourseError && (
@@ -678,33 +859,135 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">
-                    Tuition Price (INR ₹) <span className="text-rose-500">*</span>
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">
+                  Tuition Price (INR ₹) <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  required
+                  min="0"
+                  value={newCoursePrice}
+                  onChange={(e) => setNewCoursePrice(e.target.value)}
+                  placeholder="3499"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 font-mono"
+                />
+              </div>
+
+              {/* Course Thumbnail Upload Section (Direct to Cloudinary via Backend) */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-slate-700 block text-xs">
+                    Course Thumbnail <span className="text-slate-400 font-normal">(16:9 recommended, JPG, PNG, WEBP, max 5 MB)</span>
                   </label>
-                  <input
-                    type="number"
-                    required
-                    min="0"
-                    value={newCoursePrice}
-                    onChange={(e) => setNewCoursePrice(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 font-mono"
-                  />
+                  {uploadedThumbnailUrl && (
+                    <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1">
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      Uploaded to Cloudinary
+                    </span>
+                  )}
                 </div>
 
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">
-                    Thumbnail Image URL
-                  </label>
-                  <input
-                    type="url"
-                    value={newCourseThumbnail}
-                    onChange={(e) => setNewCourseThumbnail(e.target.value)}
-                    placeholder="https://..."
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 text-xs"
-                  />
-                </div>
+                {/* If thumbnail preview or uploaded image is present */}
+                {thumbnailPreviewUrl || uploadedThumbnailUrl ? (
+                  <div className="relative group rounded-xl overflow-hidden border border-slate-200 bg-slate-900 aspect-video max-h-52 w-full flex items-center justify-center shadow-sm">
+                    <img
+                      src={thumbnailPreviewUrl || uploadedThumbnailUrl}
+                      alt="Course Thumbnail Preview"
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute inset-0 bg-slate-950/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 p-4">
+                      <label className="px-3 py-1.5 bg-white/90 hover:bg-white text-slate-800 text-xs font-semibold rounded-lg shadow-md cursor-pointer flex items-center gap-1.5 transition-colors">
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Change Image</span>
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/jpg"
+                          className="hidden"
+                          disabled={isUploadingThumbnail}
+                          onChange={handleThumbnailFileChange}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        disabled={isUploadingThumbnail}
+                        onClick={handleRemoveThumbnail}
+                        className="px-3 py-1.5 bg-rose-600/90 hover:bg-rose-600 text-white text-xs font-semibold rounded-lg shadow-md cursor-pointer flex items-center gap-1.5 transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Remove</span>
+                      </button>
+                    </div>
+
+                    {/* Active Uploading Overlay */}
+                    {isUploadingThumbnail && (
+                      <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-xs flex flex-col items-center justify-center gap-2 text-white p-4">
+                        <div className="w-6 h-6 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                        <span className="text-xs font-medium">{thumbnailUploadStatus || "Uploading to Cloudinary..."}</span>
+                        {thumbnailUploadProgress > 0 && (
+                          <div className="w-48 bg-slate-700 rounded-full h-1.5 overflow-hidden mt-1">
+                            <div
+                              className="bg-indigo-500 h-full transition-all duration-300"
+                              style={{ width: `${thumbnailUploadProgress}%` }}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  /* Dropzone & Upload Button */
+                  <div
+                    onDragOver={handleThumbnailDragOver}
+                    onDragLeave={handleThumbnailDragLeave}
+                    onDrop={handleThumbnailDrop}
+                    className={`border-2 border-dashed rounded-xl p-5 text-center transition-all ${
+                      isDraggingThumbnail
+                        ? "border-indigo-500 bg-indigo-50/60"
+                        : "border-slate-200 hover:border-indigo-300 bg-slate-50/50 hover:bg-indigo-50/20"
+                    }`}
+                  >
+                    <div className="flex flex-col items-center justify-center space-y-2">
+                      <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center">
+                        <ImageIcon className="w-5 h-5" />
+                      </div>
+                      <div className="space-y-0.5">
+                        <p className="text-xs font-semibold text-slate-800">
+                          Drag & drop course thumbnail here, or click to browse
+                        </p>
+                        <p className="text-[11px] text-slate-500">
+                          Supports JPG, PNG, WEBP • Max 5 MB
+                        </p>
+                      </div>
+                      <label className="mt-2 inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-xs cursor-pointer transition-colors">
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Upload Thumbnail</span>
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/jpg"
+                          className="hidden"
+                          disabled={isUploadingThumbnail}
+                          onChange={handleThumbnailFileChange}
+                        />
+                      </label>
+                    </div>
+
+                    {isUploadingThumbnail && (
+                      <div className="mt-3 p-2.5 bg-indigo-50 border border-indigo-100 rounded-lg flex items-center justify-center gap-2 text-indigo-700 text-xs">
+                        <div className="w-3.5 h-3.5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                        <span>{thumbnailUploadStatus || "Uploading to Cloudinary..."}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Validation / Upload Error Message */}
+                {thumbnailError && (
+                  <div className="text-xs text-rose-600 bg-rose-50 border border-rose-100 rounded-lg p-2.5 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                    <span>{thumbnailError}</span>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -738,21 +1021,26 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
-                  disabled={isSubmittingCourse}
-                  onClick={() => setShowCreateCourseModal(false)}
+                  disabled={isSubmittingCourse || isUploadingThumbnail}
+                  onClick={handleCloseCreateCourseModal}
                   className="px-4 py-2 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 disabled:opacity-50 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmittingCourse}
+                  disabled={isSubmittingCourse || isUploadingThumbnail}
                   className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-sm disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
                 >
                   {isSubmittingCourse ? (
                     <>
                       <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                       <span>Saving to MongoDB...</span>
+                    </>
+                  ) : isUploadingThumbnail ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Uploading Thumbnail...</span>
                     </>
                   ) : (
                     <span>Create & Submit for Approval</span>
