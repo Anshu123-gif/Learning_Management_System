@@ -114,9 +114,38 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const [uploadError, setUploadError] = useState("");
   const [cloudinaryUploadSuccess, setCloudinaryUploadSuccess] = useState(false);
 
+  /**
+   * Helper to retrieve authoritative JWT from existing application storage ('edupulse_jwt_token')
+   * and build standard HTTP Authorization Bearer headers for protected backend requests.
+   */
+  const getTeacherAuthHeaders = () => {
+    const token = localStorage.getItem("edupulse_jwt_token");
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    return { token, headers };
+  };
+
   const uploadThumbnailFile = async (file: File) => {
     setThumbnailError("");
 
+    // 1. Verify user session & teacher/admin role
+    if (!currentUser || (currentUser.role !== "teacher" && currentUser.role !== "admin")) {
+      setThumbnailError("Authentication required. Please sign in as a teacher to upload course thumbnails.");
+      return;
+    }
+
+    // 2. Verify valid JWT token from existing storage ('edupulse_jwt_token')
+    const { token, headers: authHeaders } = getTeacherAuthHeaders();
+    if (!token) {
+      setThumbnailError("Authentication required. Please sign in to obtain a valid Bearer token.");
+      return;
+    }
+
+    // 3. Client-side file type and size validation
     const allowedMimeTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
     const fileType = file.type.toLowerCase();
     const hasValidExtension = /\.(jpe?g|png|webp)$/i.test(file.name);
@@ -141,13 +170,9 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     // Clean up previously uploaded thumbnail in Cloudinary if teacher is replacing before submit
     if (uploadedThumbnailPublicId) {
       try {
-        const token = localStorage.getItem("token") || "";
         fetch("/api/courses/delete-thumbnail", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
+          headers: authHeaders,
           body: JSON.stringify({ publicId: uploadedThumbnailPublicId }),
         }).catch(() => {});
       } catch {}
@@ -168,13 +193,9 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
       setThumbnailUploadProgress(60);
       setThumbnailUploadStatus("Uploading thumbnail to Cloudinary via backend...");
 
-      const token = localStorage.getItem("token") || "";
       const res = await fetch("/api/courses/upload-thumbnail", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers: authHeaders,
         body: JSON.stringify({
           image: dataUri,
           fileName: file.name,
@@ -230,15 +251,14 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const handleRemoveThumbnail = async () => {
     if (uploadedThumbnailPublicId) {
       try {
-        const token = localStorage.getItem("token") || "";
-        await fetch("/api/courses/delete-thumbnail", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({ publicId: uploadedThumbnailPublicId }),
-        });
+        const { token, headers: authHeaders } = getTeacherAuthHeaders();
+        if (token) {
+          await fetch("/api/courses/delete-thumbnail", {
+            method: "POST",
+            headers: authHeaders,
+            body: JSON.stringify({ publicId: uploadedThumbnailPublicId }),
+          });
+        }
       } catch (err) {
         console.warn("Could not delete thumbnail from Cloudinary:", err);
       }
@@ -335,13 +355,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     setUploadStatusMessage("Preparing lecture...");
 
     try {
-      const token = localStorage.getItem("edupulse_jwt_token");
-      const authHeaders: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      if (token) {
-        authHeaders["Authorization"] = `Bearer ${token}`;
-      }
+      const { headers: authHeaders } = getTeacherAuthHeaders();
 
       // 1. Determine target section
       let targetSectionId = selectedSectionId;
