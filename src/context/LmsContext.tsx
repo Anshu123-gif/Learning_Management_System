@@ -759,14 +759,25 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     quizId: string
   ): Promise<{ success: boolean; quiz?: any; attempt?: any; message?: string }> => {
     try {
+      const cleanQuizId = (quizId || "").replace(/^\/+/, "").trim();
       const token = localStorage.getItem("edupulse_jwt_token");
       const headers: Record<string, string> = {};
       if (token) headers["Authorization"] = `Bearer ${token}`;
 
-      const res = await fetch(`/api/quizzes/${quizId}`, { headers });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        return { success: false, message: data.message || "Failed to fetch quiz." };
+      const res = await fetch(`/api/quizzes/${cleanQuizId}`, { headers });
+      let data: any = null;
+      const text = await res.text();
+      try {
+        data = JSON.parse(text);
+      } catch {
+        return {
+          success: false,
+          message: `Server returned ${res.status}: ${res.statusText || "Unable to load quiz."}`,
+        };
+      }
+
+      if (!res.ok || !data?.success) {
+        return { success: false, message: data?.message || "Failed to fetch quiz." };
       }
 
       if (data.quiz) {
@@ -781,7 +792,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           _id: data.attempt.attemptId || `att_${Date.now()}`,
           attemptId: data.attempt.attemptId,
           studentId: currentUser?._id || "",
-          quizId: data.quiz?.quizId || quizId,
+          quizId: data.quiz?.quizId || cleanQuizId,
           courseId: data.quiz?.courseId || "",
           score: data.attempt.score,
           totalMarks: data.attempt.totalMarks,
@@ -792,7 +803,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
         setQuizAttempts((prev) => [
           studentAttempt,
-          ...prev.filter((a) => !(a.quizId === quizId && a.studentId === currentUser?._id)),
+          ...prev.filter((a) => !(a.quizId === cleanQuizId && a.studentId === currentUser?._id)),
         ]);
       }
 
@@ -812,6 +823,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     selectedAnswers: { questionId: string; answer: string | number }[] | Record<string, number>
   ): Promise<{ success: boolean; result?: any; alreadyCompleted?: boolean; message?: string }> => {
     try {
+      const cleanQuizId = (quizId || "").replace(/^\/+/, "").trim();
       const token = localStorage.getItem("edupulse_jwt_token");
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -834,18 +846,27 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         });
       }
 
-      const res = await fetch(`/api/quizzes/${quizId}/submit`, {
+      const res = await fetch(`/api/quizzes/${cleanQuizId}/submit`, {
         method: "POST",
         headers,
         body: JSON.stringify({ answers: answersMap }),
       });
 
-      const data = await res.json();
-
-      if (!res.ok || !data.success) {
+      let data: any = null;
+      const text = await res.text();
+      try {
+        data = JSON.parse(text);
+      } catch {
         return {
           success: false,
-          message: data.message || "Failed to submit quiz attempt.",
+          message: `Server returned ${res.status}: ${res.statusText || "Unable to submit quiz."}`,
+        };
+      }
+
+      if (!res.ok || !data?.success) {
+        return {
+          success: false,
+          message: data?.message || "Failed to submit quiz attempt.",
         };
       }
 

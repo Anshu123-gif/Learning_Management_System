@@ -26,6 +26,14 @@
       "destination": "/api/courses"
     },
     {
+      "source": "/api/quizzes/:quizId/submit",
+      "destination": "/api/quizzes?quizId=:quizId&action=submit"
+    },
+    {
+      "source": "/api/quizzes/:quizId/attempt",
+      "destination": "/api/quizzes?quizId=:quizId&action=attempt"
+    },
+    {
       "source": "/api/quizzes/:path*",
       "destination": "/api/quizzes?path=:path*"
     },

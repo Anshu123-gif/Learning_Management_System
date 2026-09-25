@@ -43,31 +43,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS configuration headers
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, X-Requested-With");
 
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
 
-  // Parse path or query params
+  // Parse path or query params reliably across all environments (Vercel rewrites and Express)
   // Examples:
   // /api/quizzes -> base
-  // /api/quizzes/:quizId
-  // /api/quizzes/course/:courseId
+  // /api/quizzes/:quizId -> req.query.quizId or path = :quizId
+  // /api/quizzes/:quizId/submit -> req.query.action = "submit", quizId = :quizId OR path = :quizId/submit
   let subPath = "";
   if (req.query?.path) {
     if (Array.isArray(req.query.path)) {
       subPath = req.query.path.join("/");
     } else {
-      subPath = req.query.path;
+      subPath = String(req.query.path);
     }
   } else if (req.url) {
-    const cleanUrl = req.url.split("?")[0];
-    const match = cleanUrl.match(/\/api\/quizzes\/(.+)/);
-    if (match && match[1]) {
-      subPath = match[1];
+    try {
+      const urlObj = new URL(req.url, "http://localhost");
+      const pathParam = urlObj.searchParams.get("path");
+      if (pathParam) {
+        subPath = pathParam;
+      } else {
+        const cleanPath = urlObj.pathname;
+        const match = cleanPath.match(/\/api\/quizzes\/(.+)/);
+        if (match && match[1]) {
+          subPath = match[1];
+        }
+      }
+    } catch {
+      const cleanUrl = req.url.split("?")[0];
+      const match = cleanUrl.match(/\/api\/quizzes\/(.+)/);
+      if (match && match[1]) {
+        subPath = match[1];
+      }
     }
   }
+
+  // Normalize and decode URL components (e.g., %2F -> /)
+  try {
+    subPath = decodeURIComponent(subPath);
+  } catch {}
 
   let body = req.body;
   if (typeof body === "string") {
@@ -76,17 +95,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } catch {}
   }
 
+  // Identify action and quizId
+  const isSubmitAction =
+    req.query?.action === "submit" ||
+    subPath.endsWith("/submit") ||
+    subPath === "submit" ||
+    subPath.includes("/submit") ||
+    (req.url && (req.url.includes("/submit") || req.url.includes("action=submit")));
+
+  let submitQuizId = (req.query?.quizId as string) || (req.query?.id as string) || "";
+  if (!submitQuizId && subPath) {
+    const cleaned = subPath.replace(/\/submit\/?$/, "").replace(/^\//, "");
+    if (cleaned && cleaned !== "submit") {
+      submitQuizId = cleaned;
+    }
+  }
+  if (!submitQuizId && body?.quizId) {
+    submitQuizId = body.quizId;
+  }
+
   // 1. POST /api/quizzes/:quizId/submit: Submit student quiz attempt
-  if (req.method === "POST" && (subPath.endsWith("/submit") || subPath.includes("submit"))) {
+  if (req.method === "POST" && isSubmitAction) {
     try {
       const user = requireAuthUser(req);
-      let quizId = subPath.replace(/\/submit\/?$/, "");
-      if (quizId.startsWith("/")) quizId = quizId.slice(1);
-      if (!quizId) {
-        quizId = (req.query?.quizId as string) || (req.query?.id as string) || "";
+      if (!submitQuizId) {
+        return res.status(400).json({
+          success: false,
+          message: "quizId is required to submit a quiz attempt.",
+        });
       }
       const { answers } = body || {};
-      const result = await submitQuizAttemptInDb(quizId, answers, user.userId, user.role);
+      const result = await submitQuizAttemptInDb(submitQuizId, answers, user.userId, user.role);
       return res.status(200).json(result);
     } catch (err: any) {
       console.error("[Vercel /api/quizzes/submit] POST Error:", err);
@@ -178,12 +217,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // Check student attempt
-      if (subPath.includes("attempt")) {
+      const isAttemptAction =
+        req.query?.action === "attempt" ||
+        subPath.endsWith("/attempt") ||
+        subPath === "attempt" ||
+        subPath.includes("/attempt");
+
+      if (isAttemptAction) {
         const authUser = requireAuthUser(req);
-        let quizId = subPath.replace(/\/attempt\/?$/, "");
-        if (quizId.startsWith("/")) quizId = quizId.slice(1);
-        if (!quizId) {
-          quizId = (req.query?.quizId as string) || (req.query?.id as string) || "";
+        let quizId = (req.query?.quizId as string) || (req.query?.id as string) || "";
+        if (!quizId && subPath) {
+          const cleaned = subPath.replace(/\/attempt\/?$/, "").replace(/^\//, "");
+          if (cleaned && cleaned !== "attempt") {
+            quizId = cleaned;
+          }
         }
         const attempt = await getQuizAttemptForStudent(quizId, authUser.userId);
         return res.status(200).json({ success: true, attempt });
@@ -192,7 +239,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Quiz by ID
       let quizId = (req.query?.quizId as string) || (req.query?.id as string) || "";
       if (!quizId && subPath) {
-        quizId = subPath.split("/")[0];
+        quizId = subPath.split("/")[0].replace(/^\//, "");
       }
 
       if (quizId) {

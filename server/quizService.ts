@@ -629,8 +629,9 @@ export async function submitQuizAttemptInDb(
 
   if (!isTeacherOwner && !isAdmin) {
     // Student role or other: must have active enrollment
+    const candidateCourseIds = [quiz.courseId, course.courseId, String(course._id)].filter(Boolean);
     const enrollment = await MongoEnrollment.findOne({
-      courseId: quiz.courseId,
+      courseId: { $in: candidateCourseIds },
       studentId: authenticatedUserId,
     });
 
