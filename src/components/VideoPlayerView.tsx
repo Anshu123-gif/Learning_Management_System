@@ -23,6 +23,7 @@ import {
   Tv,
   Settings,
   FastForward,
+  HelpCircle,
 } from "lucide-react";
 import { Course } from "../types";
 import { useLms } from "../context/LmsContext";
@@ -31,7 +32,7 @@ import { DiscussionForum } from "./DiscussionForum";
 interface VideoPlayerViewProps {
   course: Course;
   onBack: () => void;
-  onOpenQuiz: () => void;
+  onOpenQuiz: (quiz?: any) => void;
   onOpenCertificate: () => void;
 }
 
@@ -1340,6 +1341,29 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
                       </button>
                     );
                   })}
+
+                  {/* Section Quizzes */}
+                  {section.quizzes && section.quizzes.length > 0 &&
+                    section.quizzes.map((q) => (
+                      <div
+                        key={q.quizId}
+                        onClick={() => onOpenQuiz(q)}
+                        className="w-full px-4 py-3 text-left text-xs transition-colors flex items-center justify-between hover:bg-purple-950/50 text-purple-200 border-l-2 border-purple-500 bg-purple-950/20 cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                          <HelpCircle className="w-4 h-4 text-purple-400 shrink-0" />
+                          <div className="min-w-0">
+                            <div className="font-semibold text-purple-100 truncate">{q.title}</div>
+                            <div className="text-[10px] text-purple-300/80">
+                              Section Quiz • {q.questionsCount || q.questions?.length || 0} Questions
+                            </div>
+                          </div>
+                        </div>
+                        <span className="px-2 py-0.5 bg-purple-500/20 text-purple-300 text-[10px] font-bold rounded-sm shrink-0">
+                          {q.totalMarks || 0} pts
+                        </span>
+                      </div>
+                    ))}
                 </div>
               </div>
             ))}
@@ -1356,7 +1380,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
                   {quiz.passingScore}% to earn the verified certificate.
                 </p>
                 <button
-                  onClick={onOpenQuiz}
+                  onClick={() => onOpenQuiz(quiz)}
                   className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Sparkles className="w-3.5 h-3.5" /> Open Exam Center

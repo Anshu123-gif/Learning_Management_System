@@ -13,6 +13,16 @@ import { MongoUser } from "./server/models/User.js";
 import { MongoPayment } from "./server/models/Payment.js";
 import { MongoEnrollment } from "./server/models/Enrollment.js";
 import { MongoCourse } from "./server/models/Course.js";
+import { MongoQuiz } from "./server/models/Quiz.js";
+import {
+  createQuizInDb,
+  updateQuizInDb,
+  getQuizByIdFromDb,
+  getQuizzesByCourseFromDb,
+  deleteQuizFromDb,
+  submitQuizAttemptInDb,
+  getQuizAttemptForStudent,
+} from "./server/quizService.js";
 import { fulfillEnrollmentAndPayment } from "./api/payments.js";
 import { createCourseInDb, getCoursesFromDb, updateCourseStatusInDb } from "./api/courses.js";
 import { updateCourseCurriculumInDb } from "./server/curriculumService.js";
@@ -964,6 +974,176 @@ async function startServer() {
         return res.status(500).json({
           success: false,
           message: err.message || "Failed to persist video progress.",
+        });
+      }
+    }
+  );
+
+  // -------------------------------------------------------------
+  // QUIZ MANAGEMENT ROUTES (MongoDB Atlas)
+  // -------------------------------------------------------------
+
+  // POST /api/quizzes: Create a quiz (Teacher or Admin)
+  app.post(
+    "/api/quizzes",
+    requireAuth,
+    requireRole("teacher", "admin"),
+    async (req: any, res) => {
+      try {
+        const user = req.user;
+        const result = await createQuizInDb(req.body, user.userId, user.role);
+        return res.status(201).json(result);
+      } catch (err: any) {
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({
+          success: false,
+          message: err.message || "Failed to create quiz in MongoDB.",
+        });
+      }
+    }
+  );
+
+  // PUT /api/quizzes/:quizId: Update a quiz (Teacher owner or Admin)
+  app.put(
+    "/api/quizzes/:quizId",
+    requireAuth,
+    requireRole("teacher", "admin"),
+    async (req: any, res) => {
+      try {
+        const user = req.user;
+        const quizId = req.params.quizId;
+        const result = await updateQuizInDb(quizId, req.body, user.userId, user.role);
+        return res.status(200).json(result);
+      } catch (err: any) {
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({
+          success: false,
+          message: err.message || "Failed to update quiz in MongoDB.",
+        });
+      }
+    }
+  );
+
+  // GET /api/quizzes/course/:courseId: Get all quizzes for a course
+  app.get("/api/quizzes/course/:courseId", async (req: any, res) => {
+    try {
+      const courseId = req.params.courseId;
+      let authenticatedUserId: string | undefined;
+      let authenticatedUserRole: string | undefined;
+
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        try {
+          const token = authHeader.split(" ")[1];
+          const decoded: any = jwt.verify(token, JWT_SECRET);
+          if (decoded) {
+            authenticatedUserId = decoded.userId;
+            authenticatedUserRole = decoded.role;
+          }
+        } catch {}
+      }
+
+      const result = await getQuizzesByCourseFromDb(
+        courseId,
+        authenticatedUserId,
+        authenticatedUserRole
+      );
+      return res.json(result);
+    } catch (err: any) {
+      const statusCode = err.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        message: err.message || "Failed to retrieve quizzes.",
+      });
+    }
+  });
+
+  // GET /api/quizzes/:quizId: Get a quiz by ID
+  app.get("/api/quizzes/:quizId", async (req: any, res) => {
+    try {
+      const quizId = req.params.quizId;
+      let authenticatedUserId: string | undefined;
+      let authenticatedUserRole: string | undefined;
+
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        try {
+          const token = authHeader.split(" ")[1];
+          const decoded: any = jwt.verify(token, JWT_SECRET);
+          if (decoded) {
+            authenticatedUserId = decoded.userId;
+            authenticatedUserRole = decoded.role;
+          }
+        } catch {}
+      }
+
+      const result = await getQuizByIdFromDb(
+        quizId,
+        authenticatedUserId,
+        authenticatedUserRole
+      );
+      return res.json(result);
+    } catch (err: any) {
+      const statusCode = err.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        message: err.message || "Failed to retrieve quiz.",
+      });
+    }
+  });
+
+  // POST /api/quizzes/:quizId/submit: Submit a student quiz attempt
+  app.post("/api/quizzes/:quizId/submit", requireAuth, async (req: any, res) => {
+    try {
+      const user = req.user;
+      const quizId = req.params.quizId;
+      const { answers } = req.body || {};
+      const result = await submitQuizAttemptInDb(quizId, answers, user.userId, user.role);
+      return res.json(result);
+    } catch (err: any) {
+      const statusCode = err.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        message: err.message || "Failed to submit quiz attempt.",
+      });
+    }
+  });
+
+  // GET /api/quizzes/:quizId/attempt: Get student's previous attempt if any
+  app.get("/api/quizzes/:quizId/attempt", requireAuth, async (req: any, res) => {
+    try {
+      const user = req.user;
+      const quizId = req.params.quizId;
+      const attempt = await getQuizAttemptForStudent(quizId, user.userId);
+      return res.json({
+        success: true,
+        attempt,
+      });
+    } catch (err: any) {
+      const statusCode = err.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        message: err.message || "Failed to fetch quiz attempt.",
+      });
+    }
+  });
+
+  // DELETE /api/quizzes/:quizId: Delete a quiz (Teacher owner or Admin)
+  app.delete(
+    "/api/quizzes/:quizId",
+    requireAuth,
+    requireRole("teacher", "admin"),
+    async (req: any, res) => {
+      try {
+        const user = req.user;
+        const quizId = req.params.quizId;
+        const result = await deleteQuizFromDb(quizId, user.userId, user.role);
+        return res.json(result);
+      } catch (err: any) {
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({
+          success: false,
+          message: err.message || "Failed to delete quiz.",
         });
       }
     }

@@ -1,226 +1,293 @@
 import React, { useState, useEffect } from "react";
 import {
   X,
-  Timer,
-  CheckCircle2,
-  XCircle,
   AlertTriangle,
   Award,
-  ArrowRight,
-  RotateCcw,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
   Sparkles,
+  HelpCircle,
+  AlertCircle,
 } from "lucide-react";
 import { Course } from "../types";
 import { useLms } from "../context/LmsContext";
 
 interface QuizModalProps {
   course: Course;
+  quiz?: any;
   onClose: () => void;
-  onOpenCertificate: () => void;
+  onOpenCertificate?: () => void;
 }
 
 export const QuizModal: React.FC<QuizModalProps> = ({
   course,
+  quiz: quizProp,
   onClose,
   onOpenCertificate,
 }) => {
-  const {
-    getQuizForCourse,
-    submitQuizAttempt,
-    getAttemptsForQuiz,
-    getEnrollmentForCourse,
-    getCertificateForCourse,
-  } = useLms();
+  const { fetchQuizById, submitQuizAttempt, getQuizForCourse } = useLms();
 
-  const quiz = getQuizForCourse(course._id);
-  const enrollment = getEnrollmentForCourse(course._id);
-  const certificate = getCertificateForCourse(course._id);
-  const previousAttempts = quiz ? getAttemptsForQuiz(quiz._id) : [];
+  // Determine initial quizId from props or course
+  const defaultCourseQuiz = getQuizForCourse(course._id);
+  const targetQuizId =
+    quizProp?.quizId || quizProp?._id || defaultCourseQuiz?.quizId || defaultCourseQuiz?._id;
 
-  // State
-  const [hasStarted, setHasStarted] = useState(false);
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string | number>>({});
-  const [timeLeftSeconds, setTimeLeftSeconds] = useState((quiz?.durationMinutes || 10) * 60);
-  const [isSubmitted, setIsSubmitted] = useState(false);
-  const [lastAttemptResult, setLastAttemptResult] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [activeQuiz, setActiveQuiz] = useState<any | null>(null);
 
-  // Timer effect
+  // Exam navigation & answering state
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState<number>(0);
+  const [selectedAnswers, setSelectedAnswers] = useState<Record<string, number>>({});
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Result state
+  const [result, setResult] = useState<{
+    score: number;
+    totalMarks: number;
+    percentage: number;
+    completed: boolean;
+  } | null>(null);
+
+  // Fetch full student-sanitized quiz from server (GET /api/quizzes/:quizId)
   useEffect(() => {
-    if (!hasStarted || isSubmitted) return;
+    let isMounted = true;
 
-    const timer = setInterval(() => {
-      setTimeLeftSeconds((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          handleSubmit();
-          return 0;
+    async function loadQuiz() {
+      if (!targetQuizId) {
+        if (quizProp && Array.isArray(quizProp.questions) && quizProp.questions.length > 0) {
+          setActiveQuiz(quizProp);
+          setIsLoading(false);
+          return;
         }
-        return prev - 1;
-      });
-    }, 1000);
+        setIsLoading(false);
+        setFetchError("No quiz or exam configured for this curriculum section.");
+        return;
+      }
 
-    return () => clearInterval(timer);
-  }, [hasStarted, isSubmitted]);
+      setIsLoading(true);
+      setFetchError(null);
 
-  if (!quiz) {
-    return (
-      <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl p-6 max-w-md w-full text-center space-y-3">
-          <AlertTriangle className="w-10 h-10 text-amber-500 mx-auto" />
-          <h3 className="font-bold text-slate-900">No Exam Configured</h3>
-          <p className="text-xs text-slate-500">
-            The instructor has not attached a certification exam for this course yet.
-          </p>
-          <button
-            onClick={onClose}
-            className="px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-semibold"
-          >
-            Close
-          </button>
-        </div>
-      </div>
-    );
-  }
+      try {
+        const response = await fetchQuizById(targetQuizId);
+        if (!isMounted) return;
 
-  const handleSelectAnswer = (questionId: string, answer: string | number) => {
-    if (isSubmitted) return;
+        if (response.success && response.quiz) {
+          setActiveQuiz(response.quiz);
+
+          // If student already has a completed attempt from MongoDB
+          if (response.attempt && response.attempt.completed) {
+            setResult({
+              score: response.attempt.score,
+              totalMarks: response.attempt.totalMarks,
+              percentage: response.attempt.percentage,
+              completed: true,
+            });
+          }
+        } else {
+          // If fallback local quiz exists
+          if (quizProp && Array.isArray(quizProp.questions) && quizProp.questions.length > 0) {
+            setActiveQuiz(quizProp);
+          } else if (defaultCourseQuiz && Array.isArray(defaultCourseQuiz.questions) && defaultCourseQuiz.questions.length > 0) {
+            setActiveQuiz(defaultCourseQuiz);
+          } else {
+            setFetchError(response.message || "Failed to load quiz questions.");
+          }
+        }
+      } catch (err: any) {
+        if (!isMounted) return;
+        setFetchError(err.message || "Network error loading quiz questions.");
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    loadQuiz();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [targetQuizId]);
+
+  // Select option index for current question
+  const handleSelectOption = (questionId: string, optionIndex: number) => {
+    if (isSubmitting || result) return;
+    setSubmitError(null);
     setSelectedAnswers((prev) => ({
       ...prev,
-      [questionId]: answer,
+      [questionId]: optionIndex,
     }));
   };
 
-  const handleSubmit = () => {
-    const formatted = Object.entries(selectedAnswers).map(([questionId, answer]) => ({
-      questionId,
-      answer,
-    }));
+  // Submit quiz answers to server (POST /api/quizzes/:quizId/submit)
+  const handleSubmit = async () => {
+    if (isSubmitting || !activeQuiz) return;
 
-    const result = submitQuizAttempt(course._id, quiz._id, formatted);
-    setLastAttemptResult(result);
-    setIsSubmitted(true);
+    const quizIdToSubmit = activeQuiz.quizId || activeQuiz._id || targetQuizId;
+    if (!quizIdToSubmit) {
+      setSubmitError("Quiz ID missing. Unable to submit.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setSubmitError(null);
+
+    try {
+      const response = await submitQuizAttempt(
+        course._id,
+        quizIdToSubmit,
+        selectedAnswers
+      );
+
+      if (response.success && response.result) {
+        setResult(response.result);
+      } else {
+        setSubmitError(
+          response.message || "Failed to submit quiz attempt. Please check your network and try again."
+        );
+      }
+    } catch (err: any) {
+      setSubmitError(err.message || "An unexpected error occurred during submission.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const currentQ = quiz.questions[currentQuestionIndex];
-  const totalQuestions = quiz.questions.length;
-  const minutes = Math.floor(timeLeftSeconds / 60);
-  const seconds = timeLeftSeconds % 60;
+  const questions = Array.isArray(activeQuiz?.questions) ? activeQuiz.questions : [];
+  const totalQuestions = questions.length;
+  const currentQ = questions[currentQuestionIndex];
+  const isLastQuestion = currentQuestionIndex === totalQuestions - 1;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
-      <div className="bg-white w-full max-w-3xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
-        {/* Exam Header */}
+    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
+      <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+        {/* Header */}
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
-          <div>
-            <span className="text-[10px] uppercase font-bold tracking-wider text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-sm">
-              Major Project Examination Engine
-            </span>
-            <h2 className="text-base font-bold text-slate-900 mt-0.5">{quiz.title}</h2>
+          <div className="flex items-center gap-2.5 min-w-0 pr-2">
+            <div className="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
+              <HelpCircle className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 block">
+                {course.title}
+              </span>
+              <h2 className="text-base font-bold text-slate-900 truncate">
+                {activeQuiz?.title || "Course Quiz"}
+              </h2>
+            </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            {hasStarted && !isSubmitted && (
-              <div
-                className={`flex items-center gap-1.5 font-mono text-xs font-bold px-3 py-1.5 rounded-lg ${
-                  timeLeftSeconds < 120
-                    ? "bg-rose-100 text-rose-700 animate-pulse"
-                    : "bg-indigo-50 text-indigo-700"
-                }`}
-              >
-                <Timer className="w-4 h-4" />
-                <span>
-                  {minutes.toString().padStart(2, "0")}:{seconds.toString().padStart(2, "0")}
-                </span>
-              </div>
-            )}
-            <button
-              onClick={onClose}
-              className="w-8 h-8 rounded-full hover:bg-slate-200 text-slate-400 hover:text-slate-700 flex items-center justify-center"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
+          <button
+            onClick={onClose}
+            disabled={isSubmitting}
+            className="w-8 h-8 rounded-full hover:bg-slate-200 text-slate-400 hover:text-slate-700 flex items-center justify-center transition-colors disabled:opacity-40"
+            title="Close quiz"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         {/* Modal Body */}
         <div className="p-6 overflow-y-auto flex-1 space-y-6">
-          {!hasStarted && !isSubmitted ? (
-            /* Intro / Pre-Exam Screen */
-            <div className="space-y-6 max-w-xl mx-auto text-center py-4">
-              <div className="w-16 h-16 rounded-2xl bg-indigo-50 text-indigo-600 mx-auto flex items-center justify-center shadow-inner">
-                <Award className="w-8 h-8" />
+          {/* Loading State */}
+          {isLoading ? (
+            <div className="py-16 text-center space-y-3">
+              <Loader2 className="w-8 h-8 text-indigo-600 animate-spin mx-auto" />
+              <p className="text-xs font-semibold text-slate-600">Loading quiz questions from server...</p>
+            </div>
+          ) : fetchError || totalQuestions === 0 ? (
+            /* Error / Empty State */
+            <div className="py-10 text-center space-y-4 max-w-md mx-auto">
+              <div className="w-12 h-12 rounded-full bg-amber-50 text-amber-600 mx-auto flex items-center justify-center">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-slate-900">Quiz Unavailable</h3>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  {fetchError || "This quiz does not have any questions available at the moment."}
+                </p>
+              </div>
+              <button
+                onClick={onClose}
+                className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold"
+              >
+                Close
+              </button>
+            </div>
+          ) : result ? (
+            /* Result Screen */
+            <div className="py-6 max-w-md mx-auto text-center space-y-6">
+              <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 mx-auto flex items-center justify-center shadow-inner">
+                <CheckCircle2 className="w-9 h-9" />
               </div>
 
               <div className="space-y-2">
-                <h3 className="text-xl font-extrabold text-slate-900">
-                  Ready to test your knowledge?
-                </h3>
-                <p className="text-xs text-slate-600 leading-relaxed">
-                  {quiz.description}
+                <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full">
+                  Assessment Submitted
+                </span>
+                <h3 className="text-2xl font-extrabold text-slate-900">Quiz Completed</h3>
+                <p className="text-xs text-slate-500">
+                  Your attempt has been safely evaluated and recorded.
                 </p>
               </div>
 
-              {/* Exam Rules Card */}
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs text-left space-y-2">
-                <div className="font-bold text-slate-800">Exam Instructions & Rules:</div>
-                <ul className="list-disc list-inside text-slate-600 space-y-1">
-                  <li>Total Questions: <strong>{totalQuestions} questions</strong></li>
-                  <li>Time Limit: <strong>{quiz.durationMinutes} minutes</strong> (auto-submits on timeout)</li>
-                  <li>Passing Threshold: <strong>{quiz.passingScore}%</strong> required for certificate</li>
-                  <li>Instant auto-grading for MCQ & True/False</li>
-                </ul>
+              {/* Score Display Card */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 space-y-3 text-center">
+                <div className="text-xs font-semibold text-slate-500">Your Final Score</div>
+                <div className="text-3xl font-black text-slate-900">
+                  {result.score} <span className="text-lg font-bold text-slate-400">/ {result.totalMarks}</span>
+                </div>
+                <div className="inline-block px-3 py-1 bg-indigo-50 text-indigo-700 font-bold text-sm rounded-lg">
+                  {result.percentage}%
+                </div>
               </div>
 
-              {/* Previous attempts if any */}
-              {previousAttempts.length > 0 && (
-                <div className="text-left bg-indigo-50/50 border border-indigo-100 rounded-xl p-3.5 text-xs">
-                  <div className="font-bold text-indigo-950 mb-1.5">
-                    Your Past Attempt History:
+              {/* Certificate Unlock Banner if available */}
+              {result.percentage >= 60 && onOpenCertificate && (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-xs text-left space-y-2.5">
+                  <div className="flex items-center gap-2 text-emerald-800 font-bold">
+                    <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Passing Score Achieved!</span>
                   </div>
-                  <div className="space-y-1">
-                    {previousAttempts.map((att, i) => (
-                      <div
-                        key={att._id}
-                        className="flex items-center justify-between text-slate-600 text-[11px]"
-                      >
-                        <span>
-                          Attempt #{previousAttempts.length - i} • {new Date(att.attemptedAt).toLocaleDateString()}
-                        </span>
-                        <span
-                          className={`font-bold ${
-                            att.passed ? "text-emerald-600" : "text-rose-600"
-                          }`}
-                        >
-                          Score: {att.score}% ({att.passed ? "PASSED" : "FAILED"})
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+                  <p className="text-emerald-700 leading-relaxed">
+                    Great job! You have passed this quiz assessment.
+                  </p>
+                  <button
+                    onClick={onOpenCertificate}
+                    className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg shadow-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <Award className="w-4 h-4" /> View Certificate
+                  </button>
                 </div>
               )}
 
               <button
-                onClick={() => setHasStarted(true)}
-                className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-sm transition-all shadow-md shadow-indigo-600/30 flex items-center justify-center gap-2"
+                onClick={onClose}
+                className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
               >
-                <span>Start Time-Bound Exam</span>
-                <ArrowRight className="w-4 h-4" />
+                Done
               </button>
             </div>
-          ) : !isSubmitted ? (
-            /* Active Exam Taking Interface */
+          ) : (
+            /* Active Quiz Taking Interface */
             <div className="space-y-6">
-              {/* Question Progress bar */}
+              {/* Question X of Y and Progress */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
                   <span>
-                    Question <strong className="text-slate-800">{currentQuestionIndex + 1}</strong> of {totalQuestions}
+                    Question <strong className="text-slate-900 font-bold">{currentQuestionIndex + 1}</strong> of{" "}
+                    {totalQuestions}
                   </span>
-                  <span>
-                    Answered {Object.keys(selectedAnswers).length} / {totalQuestions}
+                  <span className="text-[11px] font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-sm">
+                    {currentQ?.marks || 1} {Number(currentQ?.marks) === 1 ? "Mark" : "Marks"}
                   </span>
                 </div>
+
                 <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
                   <div
                     className="bg-indigo-600 h-full rounded-full transition-all duration-300"
@@ -231,196 +298,104 @@ export const QuizModal: React.FC<QuizModalProps> = ({
                 </div>
               </div>
 
-              {/* Question Card */}
-              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-bold text-slate-500 uppercase">
-                    {currentQ.questionType === "true_false" ? "True / False" : "Multiple Choice"}
-                  </span>
-                  <span className="text-[11px] font-bold text-indigo-600">
-                    {currentQ.points} Points
-                  </span>
-                </div>
-
-                <p className="text-sm sm:text-base font-bold text-slate-900 leading-snug">
-                  {currentQ.questionText}
-                </p>
+              {/* Question Text */}
+              <div className="space-y-4">
+                <h3 className="text-base sm:text-lg font-bold text-slate-900 leading-snug">
+                  {currentQ?.question || currentQ?.questionText}
+                </h3>
 
                 {/* Options List */}
-                <div className="space-y-2.5 pt-2">
-                  {currentQ.options?.map((opt, optIndex) => {
-                    const isSelected = selectedAnswers[currentQ._id] === optIndex;
+                <div className="space-y-2.5 pt-1">
+                  {(currentQ?.options || []).map((optText: string, optIndex: number) => {
+                    const questionId = currentQ?.questionId || currentQ?._id;
+                    const isSelected = selectedAnswers[questionId] === optIndex;
+
                     return (
                       <button
                         key={optIndex}
-                        onClick={() => handleSelectAnswer(currentQ._id, optIndex)}
-                        className={`w-full p-3.5 rounded-xl border text-left text-xs sm:text-sm font-medium transition-all flex items-start gap-3 ${
+                        type="button"
+                        onClick={() => handleSelectOption(questionId, optIndex)}
+                        disabled={isSubmitting}
+                        className={`w-full p-3.5 rounded-xl border text-left text-xs sm:text-sm font-medium transition-all flex items-start gap-3 cursor-pointer ${
                           isSelected
-                            ? "bg-indigo-50 border-indigo-500 text-indigo-900 shadow-2xs font-semibold"
-                            : "bg-white border-slate-200 hover:border-slate-300 text-slate-700 hover:bg-slate-50/50"
-                        }`}
+                            ? "bg-indigo-50/80 border-indigo-500 text-indigo-950 font-semibold shadow-2xs"
+                            : "bg-white border-slate-200 hover:border-slate-300 text-slate-700 hover:bg-slate-50/60"
+                        } disabled:pointer-events-none disabled:opacity-60`}
                       >
+                        {/* Radio Indicator */}
                         <span
-                          className={`w-5 h-5 rounded-full border text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5 ${
+                          className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
                             isSelected
-                              ? "bg-indigo-600 border-indigo-600 text-white"
-                              : "border-slate-300 text-slate-500"
+                              ? "border-indigo-600 bg-indigo-600 text-white"
+                              : "border-slate-300 bg-white"
                           }`}
                         >
-                          {String.fromCharCode(65 + optIndex)}
+                          {isSelected && (
+                            <span className="w-2 h-2 rounded-full bg-white" />
+                          )}
                         </span>
-                        <span>{opt}</span>
+
+                        <div className="flex-1 leading-relaxed">
+                          <span className="font-bold text-slate-500 mr-2 text-[11px]">
+                            {String.fromCharCode(65 + optIndex)}.
+                          </span>
+                          <span>{optText}</span>
+                        </div>
                       </button>
                     );
                   })}
                 </div>
               </div>
 
-              {/* Exam Navigation Footer */}
-              <div className="flex items-center justify-between pt-2">
-                <button
-                  onClick={() => setCurrentQuestionIndex((prev) => Math.max(0, prev - 1))}
-                  disabled={currentQuestionIndex === 0}
-                  className="px-4 py-2 border border-slate-200 hover:bg-slate-50 disabled:opacity-30 rounded-xl text-xs font-semibold text-slate-700"
-                >
-                  Previous
-                </button>
-
-                {currentQuestionIndex < totalQuestions - 1 ? (
-                  <button
-                    onClick={() =>
-                      setCurrentQuestionIndex((prev) =>
-                        Math.min(totalQuestions - 1, prev + 1)
-                      )
-                    }
-                    className="px-5 py-2 bg-slate-900 hover:bg-indigo-600 text-white rounded-xl text-xs font-bold transition-colors"
-                  >
-                    Next Question
-                  </button>
-                ) : (
-                  <button
-                    onClick={handleSubmit}
-                    className="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-colors shadow-md shadow-emerald-600/20"
-                  >
-                    Submit Examination
-                  </button>
-                )}
-              </div>
-            </div>
-          ) : (
-            /* Post-Submission Result & Breakdown Screen */
-            <div className="space-y-6 max-w-xl mx-auto text-center py-2">
-              <div
-                className={`w-16 h-16 rounded-full mx-auto flex items-center justify-center shadow-lg ${
-                  lastAttemptResult?.passed
-                    ? "bg-emerald-100 text-emerald-600"
-                    : "bg-rose-100 text-rose-600"
-                }`}
-              >
-                {lastAttemptResult?.passed ? (
-                  <CheckCircle2 className="w-10 h-10" />
-                ) : (
-                  <XCircle className="w-10 h-10" />
-                )}
-              </div>
-
-              <div className="space-y-1">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                  Instant Auto-Grading Complete
-                </span>
-                <h3 className="text-2xl font-extrabold text-slate-900">
-                  {lastAttemptResult?.passed ? "Congratulations, You Passed!" : "Exam Incomplete"}
-                </h3>
-                <p className="text-xs text-slate-600">
-                  You scored <strong className="text-slate-900 text-sm">{lastAttemptResult?.score}%</strong> (Passing score: {quiz.passingScore}%)
-                </p>
-              </div>
-
-              {/* Certificate Qualification Callout */}
-              {lastAttemptResult?.passed ? (
-                <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-xs text-left space-y-3">
-                  <div className="flex items-center gap-2 text-emerald-800 font-bold">
-                    <Sparkles className="w-4 h-4 text-emerald-600" />
-                    <span>Official Certification Unlocked!</span>
-                  </div>
-                  <p className="text-emerald-700 leading-relaxed">
-                    You have demonstrated academic proficiency. Your cryptographic completion certificate has been generated with a unique verification hash.
-                  </p>
-                  <button
-                    onClick={onOpenCertificate}
-                    className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-2"
-                  >
-                    <Award className="w-4 h-4" /> View & Download Certificate
-                  </button>
-                </div>
-              ) : (
-                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-left space-y-2">
-                  <div className="font-bold text-amber-900">Passing Score Not Reached</div>
-                  <p className="text-amber-800">
-                    A minimum of {quiz.passingScore}% is required to generate the course certificate. You can review the course lectures and attempt the exam again anytime.
-                  </p>
+              {/* Submission Error Banner */}
+              {submitError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{submitError}</span>
                 </div>
               )}
 
-              {/* Question by Question Answer Review */}
-              <div className="text-left space-y-3 pt-2">
-                <div className="text-xs font-bold text-slate-800">Review Questions:</div>
-                <div className="space-y-2">
-                  {quiz.questions.map((q, idx) => {
-                    const ans = lastAttemptResult?.answers?.find(
-                      (a: any) => a.questionId === q._id
-                    );
-                    const isCorrect = ans?.isCorrect;
-
-                    return (
-                      <div
-                        key={q._id}
-                        className={`p-3 rounded-xl border text-xs space-y-1 ${
-                          isCorrect
-                            ? "bg-emerald-50/50 border-emerald-200"
-                            : "bg-rose-50/50 border-rose-200"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between font-bold text-slate-900">
-                          <span>
-                            {idx + 1}. {q.questionText}
-                          </span>
-                          <span
-                            className={isCorrect ? "text-emerald-700" : "text-rose-700"}
-                          >
-                            {isCorrect ? "+25 pts" : "0 pts"}
-                          </span>
-                        </div>
-                        {q.explanation && (
-                          <div className="text-[11px] text-slate-600 bg-white/80 p-2 rounded-lg mt-1">
-                            <span className="font-bold text-slate-700">Explanation: </span>
-                            {q.explanation}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3 pt-2">
+              {/* Navigation Footer */}
+              <div className="flex items-center justify-between pt-4 border-t border-slate-100">
                 <button
-                  onClick={() => {
-                    setIsSubmitted(false);
-                    setHasStarted(false);
-                    setSelectedAnswers({});
-                    setTimeLeftSeconds((quiz.durationMinutes || 10) * 60);
-                  }}
-                  className="flex-1 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-xs rounded-xl flex items-center justify-center gap-2"
+                  type="button"
+                  onClick={() => setCurrentQuestionIndex((prev) => Math.max(0, prev - 1))}
+                  disabled={currentQuestionIndex === 0 || isSubmitting}
+                  className="px-4 py-2 border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none rounded-xl text-xs font-semibold text-slate-700 flex items-center gap-1.5 transition-colors"
                 >
-                  <RotateCcw className="w-3.5 h-3.5" /> Retake Exam
+                  <ChevronLeft className="w-4 h-4" />
+                  <span>Previous</span>
                 </button>
-                <button
-                  onClick={onClose}
-                  className="flex-1 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl"
-                >
-                  Done
-                </button>
+
+                {!isLastQuestion ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCurrentQuestionIndex((prev) => Math.min(totalQuestions - 1, prev + 1))
+                    }
+                    disabled={isSubmitting}
+                    className="px-5 py-2 bg-slate-900 hover:bg-indigo-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors"
+                  >
+                    <span>Next</span>
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleSubmit}
+                    disabled={isSubmitting}
+                    className="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-emerald-600/20 flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Submitting Quiz...</span>
+                      </>
+                    ) : (
+                      <span>Submit Quiz</span>
+                    )}
+                  </button>
+                )}
               </div>
             </div>
           )}

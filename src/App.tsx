@@ -30,6 +30,7 @@ const MainApp: React.FC = () => {
   const [learningCourse, setLearningCourse] = useState<Course | null>(null);
   const [payingCourse, setPayingCourse] = useState<Course | null>(null);
   const [quizCourse, setQuizCourse] = useState<Course | null>(null);
+  const [activeQuizForModal, setActiveQuizForModal] = useState<any | null>(null);
   const [certCourse, setCertCourse] = useState<Course | null>(null);
   const [isDossierOpen, setIsDossierOpen] = useState(false);
 
@@ -40,7 +41,10 @@ const MainApp: React.FC = () => {
         <VideoPlayerView
           course={learningCourse}
           onBack={() => setLearningCourse(null)}
-          onOpenQuiz={() => setQuizCourse(learningCourse)}
+          onOpenQuiz={(q) => {
+            setActiveQuizForModal(q || null);
+            setQuizCourse(learningCourse);
+          }}
           onOpenCertificate={() => setCertCourse(learningCourse)}
         />
 
@@ -48,10 +52,15 @@ const MainApp: React.FC = () => {
         {quizCourse && (
           <QuizModal
             course={quizCourse}
-            onClose={() => setQuizCourse(null)}
+            quiz={activeQuizForModal}
+            onClose={() => {
+              setQuizCourse(null);
+              setActiveQuizForModal(null);
+            }}
             onOpenCertificate={() => {
               setCertCourse(quizCourse);
               setQuizCourse(null);
+              setActiveQuizForModal(null);
             }}
           />
         )}

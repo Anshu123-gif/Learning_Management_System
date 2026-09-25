@@ -14,6 +14,7 @@ import {
   FileText,
   Lock,
   Zap,
+  HelpCircle,
 } from "lucide-react";
 import { Course } from "../types";
 import { useLms } from "../context/LmsContext";
@@ -298,6 +299,30 @@ export const CourseDetailModal: React.FC<CourseDetailModalProps> = ({
                             </div>
                           </div>
                         ))}
+
+                        {section.quizzes && section.quizzes.length > 0 &&
+                          section.quizzes.map((quiz) => (
+                            <div
+                              key={quiz.quizId}
+                              className="px-5 py-3 flex items-center justify-between text-xs bg-purple-50/40 hover:bg-purple-50/70 transition-colors border-l-2 border-purple-500"
+                            >
+                              <div className="flex items-center gap-2.5 text-slate-800">
+                                <HelpCircle className="w-4 h-4 text-purple-600 shrink-0" />
+                                <div>
+                                  <span className="font-semibold text-slate-900">{quiz.title}</span>
+                                  {quiz.description && (
+                                    <p className="text-[11px] text-slate-500 line-clamp-1">{quiz.description}</p>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className="text-[10px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full">
+                                  Quiz • {quiz.questionsCount || quiz.questions?.length || 0} Qs • {quiz.totalMarks || 0} pts
+                                </span>
+                              </div>
+                            </div>
+                          ))}
                       </div>
                     )}
                   </div>

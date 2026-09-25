@@ -26,6 +26,14 @@
       "destination": "/api/courses"
     },
     {
+      "source": "/api/quizzes/:path*",
+      "destination": "/api/quizzes?path=:path*"
+    },
+    {
+      "source": "/api/quizzes",
+      "destination": "/api/quizzes"
+    },
+    {
       "source": "/api/health",
       "destination": "/api/auth?path=health"
     },

@@ -51,8 +51,17 @@ interface LmsContextType {
   
   // Quizzes & Exams
   getQuizForCourse: (courseId: string) => Quiz | undefined;
-  submitQuizAttempt: (courseId: string, quizId: string, selectedAnswers: { questionId: string; answer: string | number }[]) => QuizAttempt;
+  submitQuizAttempt: (
+    courseId: string,
+    quizId: string,
+    selectedAnswers: { questionId: string; answer: string | number }[] | Record<string, number>
+  ) => Promise<{ success: boolean; result?: any; alreadyCompleted?: boolean; message?: string }>;
+  fetchQuizById: (quizId: string) => Promise<{ success: boolean; quiz?: any; attempt?: any; message?: string }>;
   getAttemptsForQuiz: (quizId: string) => QuizAttempt[];
+  addQuizToSection: (courseId: string, sectionId: string, quizData: { title: string; description?: string; questions: any[] }) => Promise<{ success: boolean; quiz?: any; course?: Course; message?: string }>;
+  updateQuiz: (quizId: string, quizData: { title?: string; description?: string; questions?: any[] }) => Promise<{ success: boolean; quiz?: any; message?: string }>;
+  deleteQuiz: (quizId: string, courseId: string) => Promise<{ success: boolean; message?: string }>;
+  fetchQuizzesForCourse: (courseId: string) => Promise<any[]>;
   
   // Certificates
   getCertificateForCourse: (courseId: string) => Certificate | undefined;
@@ -667,54 +676,146 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return quizzes.find((q) => q.courseId === courseId);
   };
 
-  const submitQuizAttempt = (
+  const fetchQuizById = async (
+    quizId: string
+  ): Promise<{ success: boolean; quiz?: any; attempt?: any; message?: string }> => {
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const res = await fetch(`/api/quizzes/${quizId}`, { headers });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        return { success: false, message: data.message || "Failed to fetch quiz." };
+      }
+
+      if (data.quiz) {
+        setQuizzes((prev) => {
+          const filtered = prev.filter((q) => q._id !== data.quiz._id && q.quizId !== data.quiz.quizId);
+          return [...filtered, data.quiz];
+        });
+      }
+
+      if (data.attempt) {
+        const studentAttempt: QuizAttempt = {
+          _id: data.attempt.attemptId || `att_${Date.now()}`,
+          attemptId: data.attempt.attemptId,
+          studentId: currentUser?._id || "",
+          quizId: data.quiz?.quizId || quizId,
+          courseId: data.quiz?.courseId || "",
+          score: data.attempt.score,
+          totalMarks: data.attempt.totalMarks,
+          percentage: data.attempt.percentage,
+          completed: data.attempt.completed,
+          passed: data.attempt.percentage >= 60,
+          attemptedAt: data.attempt.attemptedAt,
+        };
+        setQuizAttempts((prev) => [
+          studentAttempt,
+          ...prev.filter((a) => !(a.quizId === quizId && a.studentId === currentUser?._id)),
+        ]);
+      }
+
+      return {
+        success: true,
+        quiz: data.quiz,
+        attempt: data.attempt,
+      };
+    } catch (err: any) {
+      return { success: false, message: err.message || "Network error while fetching quiz." };
+    }
+  };
+
+  const submitQuizAttempt = async (
     courseId: string,
     quizId: string,
-    selectedAnswers: { questionId: string; answer: string | number }[]
-  ): QuizAttempt => {
-    const quiz = quizzes.find((q) => q._id === quizId);
-    if (!quiz) throw new Error("Quiz not found");
+    selectedAnswers: { questionId: string; answer: string | number }[] | Record<string, number>
+  ): Promise<{ success: boolean; result?: any; alreadyCompleted?: boolean; message?: string }> => {
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
 
-    let earnedPoints = 0;
-    let totalPoints = 0;
-
-    const evaluatedAnswers = selectedAnswers.map((sel) => {
-      const q = quiz.questions.find((quest) => quest._id === sel.questionId);
-      totalPoints += q?.points || 25;
-      const isCorrect = q ? String(q.correctAnswer) === String(sel.answer) : false;
-      if (isCorrect) {
-        earnedPoints += q?.points || 25;
+      // Format answers as { [questionId]: number }
+      const answersMap: Record<string, number> = {};
+      if (Array.isArray(selectedAnswers)) {
+        selectedAnswers.forEach((sel) => {
+          const num = Number(sel.answer);
+          if (!isNaN(num)) {
+            answersMap[sel.questionId] = num;
+          }
+        });
+      } else if (selectedAnswers && typeof selectedAnswers === "object") {
+        Object.entries(selectedAnswers).forEach(([qId, val]) => {
+          const num = Number(val);
+          if (!isNaN(num)) {
+            answersMap[qId] = num;
+          }
+        });
       }
+
+      const res = await fetch(`/api/quizzes/${quizId}/submit`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ answers: answersMap }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        return {
+          success: false,
+          message: data.message || "Failed to submit quiz attempt.",
+        };
+      }
+
+      // Persist attempt locally in React state & storage
+      const resultData = data.result;
+      if (resultData) {
+        const attempt: QuizAttempt = {
+          _id: resultData.attemptId || `attempt_${Date.now()}`,
+          attemptId: resultData.attemptId,
+          studentId: currentUser?._id || "usr_student_1",
+          quizId,
+          courseId,
+          score: resultData.score,
+          totalMarks: resultData.totalMarks,
+          percentage: resultData.percentage,
+          completed: true,
+          passed: (resultData.percentage ?? 0) >= 60,
+          answers: answersMap,
+          attemptedAt: resultData.attemptedAt || new Date().toISOString(),
+        };
+
+        setQuizAttempts((prev) => {
+          const updated = [
+            attempt,
+            ...prev.filter((a) => !(a.quizId === quizId && a.studentId === currentUser?._id)),
+          ];
+          localStorage.setItem("edupulse_quiz_attempts", JSON.stringify(updated));
+          return updated;
+        });
+
+        // Check certificate qualification
+        const enrollment = getEnrollmentForCourse(courseId);
+        if (enrollment && enrollment.progressPercent === 100 && (resultData.percentage ?? 0) >= 60) {
+          generateCertificate(courseId);
+        }
+      }
+
       return {
-        questionId: sel.questionId,
-        selectedAnswer: sel.answer,
-        isCorrect,
+        success: true,
+        result: data.result,
+        alreadyCompleted: data.alreadyCompleted,
+        message: data.message,
       };
-    });
-
-    const score = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0;
-    const passed = score >= quiz.passingScore;
-
-    const attempt: QuizAttempt = {
-      _id: `attempt_${Date.now()}`,
-      studentId: currentUser?._id || "usr_student_1",
-      quizId,
-      courseId,
-      score,
-      passed,
-      answers: evaluatedAnswers,
-      attemptedAt: new Date().toISOString(),
-    };
-
-    setQuizAttempts((prev) => [attempt, ...prev]);
-
-    // Check certificate qualification
-    const enrollment = getEnrollmentForCourse(courseId);
-    if (enrollment && enrollment.progressPercent === 100 && passed) {
-      generateCertificate(courseId);
+    } catch (err: any) {
+      return {
+        success: false,
+        message: err.message || "Failed to submit quiz due to a network error.",
+      };
     }
-
-    return attempt;
   };
 
   const getAttemptsForQuiz = (quizId: string) => {
@@ -722,6 +823,188 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return quizAttempts.filter(
       (a) => a.quizId === quizId && a.studentId === currentUser._id
     );
+  };
+
+  const addQuizToSection = async (
+    courseId: string,
+    sectionId: string,
+    quizData: { title: string; description?: string; questions: any[] }
+  ): Promise<{ success: boolean; quiz?: any; course?: Course; message?: string }> => {
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const res = await fetch("/api/quizzes", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          courseId,
+          sectionId,
+          title: quizData.title,
+          description: quizData.description || "",
+          questions: quizData.questions,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success && data.quiz) {
+        const createdQuiz = data.quiz;
+
+        if (data.course) {
+          setCourses((prev) =>
+            prev.map((c) => (c._id === courseId ? { ...c, ...data.course } : c))
+          );
+        } else {
+          setCourses((prev) =>
+            prev.map((c) => {
+              if (c._id !== courseId) return c;
+              const updatedSections = (c.sections || []).map((sec) => {
+                if (sec._id !== sectionId) return sec;
+                const existingQuizzes = sec.quizzes || [];
+                const totalMarks = (createdQuiz.questions || []).reduce((s: number, q: any) => s + (q.marks || 1), 0);
+                const quizSummary = {
+                  quizId: createdQuiz.quizId || createdQuiz._id,
+                  courseId,
+                  sectionId,
+                  title: createdQuiz.title,
+                  description: createdQuiz.description || "",
+                  questionsCount: createdQuiz.questions?.length || 0,
+                  totalMarks,
+                  questions: createdQuiz.questions,
+                };
+                return {
+                  ...sec,
+                  quizzes: [...existingQuizzes, quizSummary],
+                };
+              });
+              return { ...c, sections: updatedSections };
+            })
+          );
+        }
+
+        setQuizzes((prev) => [createdQuiz, ...prev.filter((q) => q._id !== createdQuiz._id && q.quizId !== createdQuiz.quizId)]);
+        return { success: true, quiz: createdQuiz, course: data.course, message: data.message };
+      } else {
+        return { success: false, message: data.message || "Failed to save quiz in database." };
+      }
+    } catch (err: any) {
+      return { success: false, message: err.message || "Network error while saving quiz." };
+    }
+  };
+
+  const updateQuiz = async (
+    quizId: string,
+    quizData: { title?: string; description?: string; questions?: any[] }
+  ): Promise<{ success: boolean; quiz?: any; message?: string }> => {
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const res = await fetch(`/api/quizzes/${quizId}`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify(quizData),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success && data.quiz) {
+        const updatedQuiz = data.quiz;
+        setQuizzes((prev) =>
+          prev.map((q) => (q._id === quizId || q.quizId === quizId ? { ...q, ...updatedQuiz } : q))
+        );
+
+        setCourses((prev) =>
+          prev.map((c) => {
+            if (c._id !== updatedQuiz.courseId) return c;
+            const updatedSections = (c.sections || []).map((sec) => {
+              if (!Array.isArray(sec.quizzes)) return sec;
+              const totalMarks = (updatedQuiz.questions || []).reduce((s: number, q: any) => s + (q.marks || 1), 0);
+              const updatedQuizzes = sec.quizzes.map((q) =>
+                q.quizId === quizId
+                  ? {
+                      ...q,
+                      title: updatedQuiz.title,
+                      description: updatedQuiz.description,
+                      questionsCount: updatedQuiz.questions?.length || q.questionsCount,
+                      totalMarks,
+                      questions: updatedQuiz.questions,
+                    }
+                  : q
+              );
+              return { ...sec, quizzes: updatedQuizzes };
+            });
+            return { ...c, sections: updatedSections };
+          })
+        );
+
+        return { success: true, quiz: updatedQuiz, message: data.message };
+      } else {
+        return { success: false, message: data.message || "Failed to update quiz." };
+      }
+    } catch (err: any) {
+      return { success: false, message: err.message || "Network error while updating quiz." };
+    }
+  };
+
+  const deleteQuiz = async (quizId: string, courseId: string): Promise<{ success: boolean; message?: string }> => {
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const res = await fetch(`/api/quizzes/${quizId}`, {
+        method: "DELETE",
+        headers,
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setQuizzes((prev) => prev.filter((q) => q._id !== quizId && q.quizId !== quizId));
+        setCourses((prev) =>
+          prev.map((c) => {
+            if (c._id !== courseId) return c;
+            const updatedSections = (c.sections || []).map((sec) => {
+              if (!Array.isArray(sec.quizzes)) return sec;
+              return {
+                ...sec,
+                quizzes: sec.quizzes.filter((q) => q.quizId !== quizId),
+              };
+            });
+            return { ...c, sections: updatedSections };
+          })
+        );
+        return { success: true, message: data.message };
+      } else {
+        return { success: false, message: data.message || "Failed to delete quiz." };
+      }
+    } catch (err: any) {
+      return { success: false, message: err.message || "Network error while deleting quiz." };
+    }
+  };
+
+  const fetchQuizzesForCourse = async (courseId: string): Promise<any[]> => {
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const res = await fetch(`/api/quizzes/course/${courseId}`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.quizzes)) {
+          setQuizzes((prev) => {
+            const ids = new Set(data.quizzes.map((q: any) => q.quizId || q._id));
+            return [...data.quizzes, ...prev.filter((q) => !ids.has(q.quizId || q._id))];
+          });
+          return data.quizzes;
+        }
+      }
+      return [];
+    } catch {
+      return [];
+    }
   };
 
   const getCertificateForCourse = (courseId: string) => {
@@ -907,8 +1190,13 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         markLectureComplete,
         saveVideoProgress,
         getQuizForCourse,
+        fetchQuizById,
         submitQuizAttempt,
         getAttemptsForQuiz,
+        addQuizToSection,
+        updateQuiz,
+        deleteQuiz,
+        fetchQuizzesForCourse,
         getCertificateForCourse,
         generateCertificate,
         getCourseDiscussions,

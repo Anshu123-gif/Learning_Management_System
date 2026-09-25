@@ -18,6 +18,11 @@ import {
   Image as ImageIcon,
   RefreshCw,
   X,
+  HelpCircle,
+  Layers,
+  Edit3,
+  Award,
+  CheckSquare,
 } from "lucide-react";
 import { Course, Lecture, Section } from "../types";
 import { useLms } from "../context/LmsContext";
@@ -37,6 +42,10 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     addLectureToSection,
     saveCourseCurriculum,
     discussions,
+    addQuizToSection,
+    updateQuiz,
+    deleteQuiz,
+    fetchQuizzesForCourse,
   } = useLms();
   const { currentUser, openAuthModal } = useAuth();
 
@@ -113,6 +122,258 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const [uploadStatusMessage, setUploadStatusMessage] = useState("");
   const [uploadError, setUploadError] = useState("");
   const [cloudinaryUploadSuccess, setCloudinaryUploadSuccess] = useState(false);
+
+  // Curriculum Management Modal & Quiz Form State
+  const [curriculumCourse, setCurriculumCourse] = useState<Course | null>(null);
+  const [newCurriculumSectionTitle, setNewCurriculumSectionTitle] = useState("");
+  const [isAddingCurriculumSection, setIsAddingCurriculumSection] = useState(false);
+
+  // Quiz Modal State
+  const [showQuizModal, setShowQuizModal] = useState(false);
+  const [quizModalMode, setQuizModalMode] = useState<"create" | "edit">("create");
+  const [editingQuizId, setEditingQuizId] = useState("");
+  const [quizTargetCourse, setQuizTargetCourse] = useState<Course | null>(null);
+  const [quizTargetSectionId, setQuizTargetSectionId] = useState("");
+  const [quizTitle, setQuizTitle] = useState("");
+  const [quizDescription, setQuizDescription] = useState("");
+  const [quizQuestions, setQuizQuestions] = useState<
+    Array<{
+      questionId?: string;
+      question: string;
+      options: [string, string, string, string];
+      correctAnswer: number;
+      marks: number;
+    }>
+  >([]);
+  const [isSavingQuiz, setIsSavingQuiz] = useState(false);
+  const [quizError, setQuizError] = useState("");
+  const [quizSuccess, setQuizSuccess] = useState("");
+  const [isDeletingQuizId, setIsDeletingQuizId] = useState<string | null>(null);
+
+  // Active curriculum course synced with latest LMS courses state
+  const activeCurriculumCourse = curriculumCourse
+    ? courses.find((c) => c._id === curriculumCourse._id) || curriculumCourse
+    : null;
+
+  const createDefaultQuestion = () => ({
+    questionId: `q_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    question: "",
+    options: ["", "", "", ""] as [string, string, string, string],
+    correctAnswer: 0,
+    marks: 1,
+  });
+
+  const openCreateQuizModal = (course: Course, sectionId?: string) => {
+    setQuizTargetCourse(course);
+    const defaultSectionId = sectionId || course.sections[0]?._id || "";
+    setQuizTargetSectionId(defaultSectionId);
+    setQuizModalMode("create");
+    setEditingQuizId("");
+    setQuizTitle("");
+    setQuizDescription("");
+    setQuizQuestions([createDefaultQuestion()]);
+    setQuizError("");
+    setQuizSuccess("");
+    setShowQuizModal(true);
+  };
+
+  const openEditQuizModal = (course: Course, sectionId: string, quiz: any) => {
+    setQuizTargetCourse(course);
+    setQuizTargetSectionId(sectionId);
+    setQuizModalMode("edit");
+    setEditingQuizId(quiz.quizId || quiz._id);
+    setQuizTitle(quiz.title || "");
+    setQuizDescription(quiz.description || "");
+
+    const questionsFormatted =
+      Array.isArray(quiz.questions) && quiz.questions.length > 0
+        ? quiz.questions.map((q: any) => ({
+            questionId: q.questionId || q._id,
+            question: q.question || q.questionText || "",
+            options: (Array.isArray(q.options) && q.options.length === 4
+              ? q.options
+              : ["Option A", "Option B", "Option C", "Option D"]) as [string, string, string, string],
+            correctAnswer: typeof q.correctAnswer === "number" ? q.correctAnswer : 0,
+            marks: typeof q.marks === "number" ? q.marks : q.points || 1,
+          }))
+        : [createDefaultQuestion()];
+
+    setQuizQuestions(questionsFormatted);
+    setQuizError("");
+    setQuizSuccess("");
+    setShowQuizModal(true);
+  };
+
+  const handleAddQuestion = () => {
+    setQuizQuestions((prev) => [...prev, createDefaultQuestion()]);
+  };
+
+  const handleRemoveQuestion = (index: number) => {
+    if (quizQuestions.length <= 1) return;
+    setQuizQuestions((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleQuestionTextChange = (index: number, text: string) => {
+    setQuizQuestions((prev) =>
+      prev.map((q, idx) => (idx === index ? { ...q, question: text } : q))
+    );
+  };
+
+  const handleOptionChange = (qIndex: number, optIndex: number, text: string) => {
+    setQuizQuestions((prev) =>
+      prev.map((q, idx) => {
+        if (idx !== qIndex) return q;
+        const newOpts = [...q.options] as [string, string, string, string];
+        newOpts[optIndex] = text;
+        return { ...q, options: newOpts };
+      })
+    );
+  };
+
+  const handleCorrectAnswerChange = (qIndex: number, optIndex: number) => {
+    setQuizQuestions((prev) =>
+      prev.map((q, idx) => (idx === qIndex ? { ...q, correctAnswer: optIndex } : q))
+    );
+  };
+
+  const handleMarksChange = (qIndex: number, marksVal: number) => {
+    const val = Math.max(1, Math.round(marksVal || 1));
+    setQuizQuestions((prev) =>
+      prev.map((q, idx) => (idx === qIndex ? { ...q, marks: val } : q))
+    );
+  };
+
+  const handleSaveQuiz = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setQuizError("");
+    setQuizSuccess("");
+
+    if (!quizTargetCourse) {
+      setQuizError("Target course not selected.");
+      return;
+    }
+
+    if (!quizTargetSectionId) {
+      setQuizError("Please select a target section for this quiz.");
+      return;
+    }
+
+    if (!quizTitle.trim()) {
+      setQuizError("Please enter a quiz title.");
+      return;
+    }
+
+    if (!quizQuestions || quizQuestions.length === 0) {
+      setQuizError("Quiz must contain at least one question.");
+      return;
+    }
+
+    // Validate each question
+    for (let i = 0; i < quizQuestions.length; i++) {
+      const q = quizQuestions[i];
+      if (!q.question.trim()) {
+        setQuizError(`Question ${i + 1} text cannot be empty.`);
+        return;
+      }
+      for (let j = 0; j < 4; j++) {
+        if (!q.options[j].trim()) {
+          setQuizError(`Question ${i + 1}, Option ${String.fromCharCode(65 + j)} cannot be empty.`);
+          return;
+        }
+      }
+      if (q.correctAnswer < 0 || q.correctAnswer > 3) {
+        setQuizError(`Question ${i + 1} must have a valid correct answer chosen (Option A, B, C, or D).`);
+        return;
+      }
+      if (!q.marks || q.marks < 1) {
+        setQuizError(`Question ${i + 1} marks must be at least 1.`);
+        return;
+      }
+    }
+
+    setIsSavingQuiz(true);
+
+    try {
+      if (quizModalMode === "create") {
+        const res = await addQuizToSection(
+          quizTargetCourse._id,
+          quizTargetSectionId,
+          {
+            title: quizTitle.trim(),
+            description: quizDescription.trim(),
+            questions: quizQuestions,
+          }
+        );
+
+        if (!res.success) {
+          throw new Error(res.message || "Failed to save quiz in database.");
+        }
+
+        setQuizSuccess("Quiz successfully created and saved to MongoDB!");
+
+        setTimeout(() => {
+          setShowQuizModal(false);
+          setIsSavingQuiz(false);
+          setQuizSuccess("");
+        }, 1200);
+      } else {
+        // Edit mode
+        const res = await updateQuiz(editingQuizId, {
+          title: quizTitle.trim(),
+          description: quizDescription.trim(),
+          questions: quizQuestions,
+        });
+
+        if (!res.success) {
+          throw new Error(res.message || "Failed to update quiz in database.");
+        }
+
+        setQuizSuccess("Quiz updated successfully in MongoDB!");
+
+        setTimeout(() => {
+          setShowQuizModal(false);
+          setIsSavingQuiz(false);
+          setQuizSuccess("");
+        }, 1200);
+      }
+    } catch (err: any) {
+      setQuizError(err.message || "An error occurred while saving the quiz.");
+      setIsSavingQuiz(false);
+    }
+  };
+
+  const handleDeleteQuiz = async (quizId: string, courseId: string) => {
+    if (!window.confirm("Are you sure you want to delete this quiz? This will remove it from the course curriculum.")) {
+      return;
+    }
+
+    setIsDeletingQuizId(quizId);
+    try {
+      const res = await deleteQuiz(quizId, courseId);
+      if (!res.success) {
+        alert(res.message || "Failed to delete quiz.");
+      }
+    } catch (err: any) {
+      alert(err.message || "Failed to delete quiz.");
+    } finally {
+      setIsDeletingQuizId(null);
+    }
+  };
+
+  const handleAddNewSectionToCurriculum = async () => {
+    if (!curriculumCourse || !newCurriculumSectionTitle.trim()) return;
+    setIsAddingCurriculumSection(true);
+    try {
+      const addedSection = addSectionToCourse(curriculumCourse._id, newCurriculumSectionTitle.trim());
+      const updatedSections = [...(curriculumCourse.sections || []), addedSection];
+      await saveCourseCurriculum(curriculumCourse._id, updatedSections);
+      setNewCurriculumSectionTitle("");
+    } catch (err: any) {
+      console.warn("Failed to add section:", err);
+    } finally {
+      setIsAddingCurriculumSection(false);
+    }
+  };
 
   /**
    * Helper to retrieve authoritative JWT from existing application storage ('edupulse_jwt_token')
@@ -713,17 +974,35 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                     </td>
 
                     <td className="py-3 px-4 text-slate-600">
-                      {totalLecs} lectures ({course.sections.length} sections)
+                      {totalLecs} lectures{course.sections.some((s) => s.quizzes && s.quizzes.length > 0) ? ` • ${course.sections.flatMap((s) => s.quizzes || []).length} quizzes` : ""} ({course.sections.length} sections)
                     </td>
 
                     <td className="py-3 px-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
+                      <div className="flex items-center justify-end gap-2 flex-wrap">
+                        <button
+                          onClick={() => setCurriculumCourse(course)}
+                          className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-xs flex items-center gap-1 transition-colors cursor-pointer shadow-xs"
+                          title="Manage Curriculum & Quizzes"
+                        >
+                          <Layers className="w-3.5 h-3.5" />
+                          <span>Manage Curriculum</span>
+                        </button>
+
+                        <button
+                          onClick={() => openCreateQuizModal(course)}
+                          className="px-2.5 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 font-semibold rounded-lg text-xs flex items-center gap-1 transition-colors cursor-pointer"
+                          title="Create Section Quiz"
+                        >
+                          <HelpCircle className="w-3.5 h-3.5" />
+                          <span>Add Quiz</span>
+                        </button>
+
                         <button
                           onClick={() => {
                             setSelectedCourseForLecture(course);
                             setShowAddLectureModal(true);
                           }}
-                          className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold rounded-lg text-xs flex items-center gap-1 transition-colors cursor-pointer"
+                          className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg text-xs flex items-center gap-1 transition-colors cursor-pointer"
                           title="Upload video to Cloudinary"
                         >
                           <Upload className="w-3.5 h-3.5" />
@@ -732,7 +1011,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
 
                         <button
                           onClick={() => onSelectCourse(course)}
-                          className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg text-xs transition-colors"
+                          className="px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 font-semibold rounded-lg text-xs transition-colors"
                         >
                           View Syllabus
                         </button>
@@ -1250,6 +1529,523 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                     </>
                   ) : (
                     <span>Upload & Attach Lecture</span>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Course Curriculum Management */}
+      {activeCurriculumCourse && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-3xl w-full p-6 space-y-5 my-8 max-h-[90vh] overflow-y-auto relative animate-in fade-in">
+            {/* Header */}
+            <div className="flex items-start justify-between gap-4 pb-3 border-b border-slate-100">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 font-bold text-[10px] uppercase rounded-md tracking-wider">
+                    Curriculum Manager
+                  </span>
+                  <span className="text-xs text-slate-400 font-mono">
+                    {activeCurriculumCourse._id}
+                  </span>
+                </div>
+                <h3 className="text-lg font-extrabold text-slate-900 line-clamp-1">
+                  {activeCurriculumCourse.title}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  {activeCurriculumCourse.sections.length} sections •{" "}
+                  {activeCurriculumCourse.sections.flatMap((s) => s.lectures).length} lectures •{" "}
+                  {activeCurriculumCourse.sections.flatMap((s) => s.quizzes || []).length} quizzes
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setCurriculumCourse(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Quick Actions Header */}
+            <div className="flex items-center justify-between gap-3 p-3 bg-slate-50 border border-slate-200/80 rounded-xl">
+              <div className="text-xs font-semibold text-slate-700 flex items-center gap-2">
+                <Layers className="w-4 h-4 text-indigo-600" />
+                <span>Manage sections, video lectures, and auto-graded quizzes</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => openCreateQuizModal(activeCurriculumCourse)}
+                className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-lg shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <HelpCircle className="w-3.5 h-3.5" />
+                <span>+ Add Quiz</span>
+              </button>
+            </div>
+
+            {/* Sections Accordion/List */}
+            <div className="space-y-4">
+              {activeCurriculumCourse.sections.length === 0 ? (
+                <div className="p-8 text-center bg-slate-50 border border-dashed border-slate-200 rounded-xl space-y-2">
+                  <FolderPlus className="w-8 h-8 text-slate-400 mx-auto" />
+                  <p className="text-xs font-semibold text-slate-600">No curriculum sections yet</p>
+                  <p className="text-[11px] text-slate-400">Add a section below to start building your course.</p>
+                </div>
+              ) : (
+                activeCurriculumCourse.sections.map((section, sIndex) => {
+                  const sectionQuizzes = section.quizzes || [];
+                  return (
+                    <div
+                      key={section._id}
+                      className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs"
+                    >
+                      {/* Section Title Header */}
+                      <div className="px-4 py-3 bg-slate-50/90 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-center gap-2.5">
+                          <span className="w-6 h-6 rounded-md bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center justify-center">
+                            {sIndex + 1}
+                          </span>
+                          <span className="text-xs font-bold text-slate-900">
+                            {section.title}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            ({section.lectures.length} lecs, {sectionQuizzes.length} quizzes)
+                          </span>
+                        </div>
+
+                        {/* Section Actions: Add Lecture & Add Quiz */}
+                        <div className="flex items-center gap-2 self-end sm:self-center">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedCourseForLecture(activeCurriculumCourse);
+                              setSelectedSectionId(section._id);
+                              setShowAddLectureModal(true);
+                            }}
+                            className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-[11px] font-semibold rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                          >
+                            <Upload className="w-3 h-3 text-slate-500" />
+                            <span>+ Lecture</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => openCreateQuizModal(activeCurriculumCourse, section._id)}
+                            className="px-2.5 py-1 bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 text-[11px] font-bold rounded-lg flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
+                          >
+                            <HelpCircle className="w-3 h-3 text-purple-600" />
+                            <span>+ Quiz</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Section Content: Lectures and Quizzes */}
+                      <div className="p-3 divide-y divide-slate-100 space-y-2">
+                        {/* Lectures */}
+                        {section.lectures.length > 0 && (
+                          <div className="space-y-1.5 pb-2">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-1">
+                              Lectures ({section.lectures.length})
+                            </div>
+                            {section.lectures.map((lec, lIdx) => (
+                              <div
+                                key={lec._id}
+                                className="px-3 py-2 bg-slate-50/60 rounded-lg flex items-center justify-between text-xs hover:bg-slate-100/70 transition-colors"
+                              >
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <Video className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                                  <span className="font-medium text-slate-800 truncate">
+                                    {lIdx + 1}. {lec.title}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <span className="text-[10px] text-slate-500 font-mono">
+                                    {lec.durationMinutes}m
+                                  </span>
+                                  {lec.videoPublicId ? (
+                                    <span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 text-[9px] font-bold rounded">
+                                      Cloudinary
+                                    </span>
+                                  ) : (
+                                    <span className="px-1.5 py-0.5 bg-slate-100 text-slate-500 text-[9px] font-medium rounded">
+                                      Standard
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Quizzes */}
+                        {sectionQuizzes.length > 0 && (
+                          <div className="space-y-1.5 pt-2">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-purple-500 px-1 flex items-center gap-1.5">
+                              <HelpCircle className="w-3 h-3" />
+                              <span>Quizzes ({sectionQuizzes.length})</span>
+                            </div>
+                            {sectionQuizzes.map((quiz) => (
+                              <div
+                                key={quiz.quizId}
+                                className="px-3 py-2.5 bg-purple-50/50 border border-purple-100 rounded-lg flex items-center justify-between text-xs hover:bg-purple-50 transition-colors"
+                              >
+                                <div className="space-y-0.5 min-w-0 pr-3">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-bold text-slate-900 truncate">
+                                      {quiz.title}
+                                    </span>
+                                    <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 font-bold text-[10px] rounded-md shrink-0">
+                                      {quiz.questionsCount || quiz.questions?.length || 0} Qs • {quiz.totalMarks || 0} Marks
+                                    </span>
+                                  </div>
+                                  {quiz.description && (
+                                    <p className="text-[11px] text-slate-500 truncate max-w-md">
+                                      {quiz.description}
+                                    </p>
+                                  )}
+                                </div>
+
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditQuizModal(activeCurriculumCourse, section._id, quiz)}
+                                    className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-white rounded-md transition-colors cursor-pointer"
+                                    title="Edit Quiz"
+                                  >
+                                    <Edit3 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={isDeletingQuizId === quiz.quizId}
+                                    onClick={() => handleDeleteQuiz(quiz.quizId, activeCurriculumCourse._id)}
+                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-white rounded-md transition-colors cursor-pointer disabled:opacity-50"
+                                    title="Delete Quiz"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Empty Section Fallback */}
+                        {section.lectures.length === 0 && sectionQuizzes.length === 0 && (
+                          <div className="py-3 text-center text-[11px] text-slate-400">
+                            No lectures or quizzes attached to this section yet.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Add New Section Footer */}
+            <div className="pt-3 border-t border-slate-200/80">
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                Add Section to Curriculum
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newCurriculumSectionTitle}
+                  onChange={(e) => setNewCurriculumSectionTitle(e.target.value)}
+                  placeholder="e.g., Section 4: Advanced Database Sharding & Indexing"
+                  className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-900 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                />
+                <button
+                  type="button"
+                  disabled={!newCurriculumSectionTitle.trim() || isAddingCurriculumSection}
+                  onClick={handleAddNewSectionToCurriculum}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Section</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setCurriculumCourse(null)}
+                className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl cursor-pointer"
+              >
+                Done Managing Curriculum
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Create or Edit Section Quiz */}
+      {showQuizModal && quizTargetCourse && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-2xl w-full p-6 space-y-5 my-8 max-h-[92vh] overflow-y-auto relative animate-in fade-in">
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-100">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 bg-purple-100 text-purple-800 font-bold text-[10px] uppercase rounded-md tracking-wider">
+                    {quizModalMode === "create" ? "New Section Quiz" : "Edit Quiz"}
+                  </span>
+                  <span className="text-xs text-slate-400 font-semibold truncate max-w-xs">
+                    {quizTargetCourse.title}
+                  </span>
+                </div>
+                <h3 className="text-base font-extrabold text-slate-900">
+                  {quizModalMode === "create" ? "Create Auto-Graded Curriculum Quiz" : "Update Curriculum Quiz"}
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Multiple-choice questions with 4 options, authoritative correct answer, and points. Persists to MongoDB.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                disabled={isSavingQuiz}
+                onClick={() => setShowQuizModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Feedback Notifications */}
+            {quizError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-center gap-2 text-rose-700 text-xs">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{quizError}</span>
+              </div>
+            )}
+
+            {quizSuccess && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2 text-emerald-800 text-xs font-semibold">
+                <CheckCircle className="w-4 h-4 shrink-0 text-emerald-600" />
+                <span>{quizSuccess}</span>
+              </div>
+            )}
+
+            {/* Quiz Form */}
+            <form onSubmit={handleSaveQuiz} className="space-y-4 text-xs">
+              {/* Target Section Selector */}
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">
+                  Target Curriculum Section <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={quizTargetSectionId}
+                  onChange={(e) => setQuizTargetSectionId(e.target.value)}
+                  disabled={quizModalMode === "edit"}
+                  required
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-indigo-500 cursor-pointer disabled:opacity-70"
+                >
+                  <option value="" disabled>Select section...</option>
+                  {quizTargetCourse.sections.map((sec, idx) => (
+                    <option key={sec._id} value={sec._id}>
+                      Section {idx + 1}: {sec.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Quiz Title */}
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">
+                  Quiz Title <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={quizTitle}
+                  onChange={(e) => setQuizTitle(e.target.value)}
+                  placeholder="e.g., Module 2 Checkpoint: SQL Joins & Window Functions"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+
+              {/* Quiz Description */}
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">
+                  Description / Instructions (Optional)
+                </label>
+                <textarea
+                  rows={2}
+                  value={quizDescription}
+                  onChange={(e) => setQuizDescription(e.target.value)}
+                  placeholder="Brief summary of test scope and concepts covered..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+
+              {/* Questions Builder */}
+              <div className="pt-2 border-t border-slate-100 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="font-extrabold text-slate-900 text-sm">
+                      Questions ({quizQuestions.length})
+                    </span>
+                    <span className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded-full font-bold text-[10px]">
+                      Total: {quizQuestions.reduce((sum, q) => sum + (q.marks || 1), 0)} Marks
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleAddQuestion}
+                    className="px-3 py-1.5 bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-700 font-bold rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Question</span>
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  {quizQuestions.map((q, qIdx) => (
+                    <div
+                      key={q.questionId || qIdx}
+                      className="p-4 bg-slate-50/70 border border-slate-200 rounded-xl space-y-3 relative hover:border-slate-300 transition-colors"
+                    >
+                      {/* Question Top Row: Index, Marks, and Delete */}
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <span className="w-5 h-5 rounded-full bg-purple-600 text-white font-extrabold text-[10px] flex items-center justify-center">
+                            {qIdx + 1}
+                          </span>
+                          <span className="font-bold text-slate-800 text-xs">
+                            Question {qIdx + 1}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-slate-500 text-[11px] font-medium">Marks:</span>
+                            <input
+                              type="number"
+                              min="1"
+                              max="100"
+                              value={q.marks}
+                              onChange={(e) => handleMarksChange(qIdx, parseInt(e.target.value) || 1)}
+                              className="w-14 bg-white border border-slate-200 rounded-lg px-2 py-1 text-slate-900 text-center font-bold"
+                            />
+                          </div>
+
+                          {quizQuestions.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveQuestion(qIdx)}
+                              className="p-1 text-slate-400 hover:text-rose-600 hover:bg-white rounded-md transition-colors cursor-pointer"
+                              title="Delete Question"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Question Text */}
+                      <div>
+                        <textarea
+                          rows={2}
+                          required
+                          value={q.question}
+                          onChange={(e) => handleQuestionTextChange(qIdx, e.target.value)}
+                          placeholder="Type your question here (e.g. Which HTTP method is idempotent?)..."
+                          className="w-full bg-white border border-slate-200 rounded-xl p-2.5 text-xs text-slate-900 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </div>
+
+                      {/* 4 Options Grid with Correct Answer Radio Button */}
+                      <div className="space-y-1.5">
+                        <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center justify-between">
+                          <span>Options (4 required)</span>
+                          <span className="text-purple-600 font-semibold normal-case">
+                            Select the radio button next to the correct answer
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          {(["A", "B", "C", "D"] as const).map((letter, optIdx) => {
+                            const isCorrect = q.correctAnswer === optIdx;
+                            return (
+                              <div
+                                key={optIdx}
+                                className={`flex items-center gap-2 p-2 rounded-xl border transition-all ${
+                                  isCorrect
+                                    ? "bg-emerald-50/80 border-emerald-300 ring-1 ring-emerald-400"
+                                    : "bg-white border-slate-200 hover:border-slate-300"
+                                }`}
+                              >
+                                <label className="flex items-center gap-1.5 cursor-pointer shrink-0">
+                                  <input
+                                    type="radio"
+                                    name={`correctAnswer_${qIdx}`}
+                                    checked={isCorrect}
+                                    onChange={() => handleCorrectAnswerChange(qIdx, optIdx)}
+                                    className="w-4 h-4 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                                  />
+                                  <span
+                                    className={`w-5 h-5 rounded-md flex items-center justify-center font-bold text-[10px] ${
+                                      isCorrect
+                                        ? "bg-emerald-600 text-white"
+                                        : "bg-slate-100 text-slate-600"
+                                    }`}
+                                  >
+                                    {letter}
+                                  </span>
+                                </label>
+
+                                <input
+                                  type="text"
+                                  required
+                                  value={q.options[optIdx]}
+                                  onChange={(e) => handleOptionChange(qIdx, optIdx, e.target.value)}
+                                  placeholder={`Option ${letter}`}
+                                  className="w-full bg-transparent border-0 p-1 text-xs text-slate-900 focus:outline-hidden focus:ring-0"
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  disabled={isSavingQuiz}
+                  onClick={() => setShowQuizModal(false)}
+                  className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={isSavingQuiz}
+                  className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-400 text-white font-bold rounded-xl flex items-center gap-2 cursor-pointer shadow-md shadow-purple-600/20"
+                >
+                  {isSavingQuiz ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Saving to MongoDB...</span>
+                    </>
+                  ) : (
+                    <span>
+                      {quizModalMode === "create" ? "Save Quiz to Curriculum" : "Update Quiz in Curriculum"}
+                    </span>
                   )}
                 </button>
               </div>

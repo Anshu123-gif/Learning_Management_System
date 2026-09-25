@@ -36,12 +36,35 @@ export interface Lecture {
   description?: string;
 }
 
+export interface QuizQuestionItem {
+  questionId: string;
+  question: string;
+  options: string[];
+  correctAnswer?: number;
+  marks: number;
+}
+
+export interface SectionQuiz {
+  _id?: string;
+  quizId: string;
+  courseId: string;
+  sectionId: string;
+  title: string;
+  description?: string;
+  questionsCount?: number;
+  totalMarks?: number;
+  questions?: QuizQuestionItem[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface Section {
   _id: string;
   courseId: string;
   title: string;
   order: number;
   lectures: Lecture[];
+  quizzes?: SectionQuiz[];
 }
 
 export type CourseStatus = "draft" | "pending" | "approved" | "rejected";
@@ -87,27 +110,35 @@ export interface QuizQuestion {
 
 export interface Quiz {
   _id: string;
+  quizId?: string;
   courseId: string;
+  sectionId?: string;
   lectureId?: string;
   title: string;
   description: string;
-  passingScore: number; // percentage e.g. 60
-  durationMinutes: number;
-  questions: QuizQuestion[];
+  passingScore?: number; // percentage e.g. 60
+  durationMinutes?: number;
+  questions: QuizQuestion[] | any[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface QuizAttempt {
   _id: string;
+  attemptId?: string;
   studentId: string;
   quizId: string;
   courseId: string;
-  score: number; // percentage
-  passed: boolean;
-  answers: {
+  score: number; // earned marks or points
+  totalMarks?: number;
+  percentage?: number;
+  completed?: boolean;
+  passed?: boolean;
+  answers?: {
     questionId: string;
     selectedAnswer: string | number;
-    isCorrect: boolean;
-  }[];
+    isCorrect?: boolean;
+  }[] | Record<string, number>;
   attemptedAt: string;
 }
 
