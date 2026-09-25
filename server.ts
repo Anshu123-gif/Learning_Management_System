@@ -24,7 +24,7 @@ import {
   getQuizAttemptForStudent,
 } from "./server/quizService.js";
 import { fulfillEnrollmentAndPayment } from "./api/payments.js";
-import { createCourseInDb, getCoursesFromDb, updateCourseStatusInDb } from "./api/courses.js";
+import { createCourseInDb, getCoursesFromDb, getCourseByIdFromDb, updateCourseStatusInDb } from "./api/courses.js";
 import { updateCourseCurriculumInDb } from "./server/curriculumService.js";
 import {
   generateCloudinaryUploadSignature,
@@ -786,6 +786,21 @@ async function startServer() {
       return res.status(statusCode).json({
         success: false,
         message: err.message || "Failed to retrieve courses.",
+      });
+    }
+  });
+
+  // GET /api/courses/:id: Single course with full curriculum & quizzes
+  app.get("/api/courses/:id", async (req, res) => {
+    try {
+      const courseId = req.params.id;
+      const result = await getCourseByIdFromDb(courseId);
+      return res.json(result);
+    } catch (err: any) {
+      const statusCode = err.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        message: err.message || "Failed to retrieve course.",
       });
     }
   });

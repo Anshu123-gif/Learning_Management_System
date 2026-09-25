@@ -59,7 +59,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   const myEnrollments = enrollments.filter((e) => e.studentId === currentUser._id);
   const enrolledCourses = courses.filter((c) =>
-    myEnrollments.some((e) => e.courseId === c._id)
+    myEnrollments.some((e) => e.courseId === c._id || ((c as any).courseId && e.courseId === (c as any).courseId))
   );
 
   const completedCount = myEnrollments.filter((e) => e.progressPercent === 100).length;

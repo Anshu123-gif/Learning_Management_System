@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   X,
   CheckCircle2,
@@ -25,22 +25,40 @@ interface CourseDetailModalProps {
   onClose: () => void;
   onEnroll: (course: Course) => void;
   onStartLearning: (course: Course) => void;
+  onOpenQuiz?: (quiz: any) => void;
 }
 
 export const CourseDetailModal: React.FC<CourseDetailModalProps> = ({
-  course,
+  course: initialCourse,
   onClose,
   onEnroll,
   onStartLearning,
+  onOpenQuiz,
 }) => {
-  const { isEnrolled, getEnrollmentForCourse } = useLms();
+  const { isEnrolled, getEnrollmentForCourse, fetchCourseById } = useLms();
   const { isAuthenticated, openAuthModal } = useAuth();
+  const [activeCourse, setActiveCourse] = useState<Course | null>(initialCourse);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     sec_1: true,
     sec_2: true,
   });
 
-  if (!course) return null;
+  useEffect(() => {
+    setActiveCourse(initialCourse);
+    if (!initialCourse?._id) return;
+    let isMounted = true;
+    fetchCourseById(initialCourse._id).then((fresh) => {
+      if (isMounted && fresh) {
+        setActiveCourse(fresh);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [initialCourse?._id, fetchCourseById]);
+
+  if (!activeCourse) return null;
+  const course = activeCourse;
 
   const enrolled = isEnrolled(course._id);
   const enrollment = getEnrollmentForCourse(course._id);
@@ -304,7 +322,14 @@ export const CourseDetailModal: React.FC<CourseDetailModalProps> = ({
                           section.quizzes.map((quiz) => (
                             <div
                               key={quiz.quizId}
-                              className="px-5 py-3 flex items-center justify-between text-xs bg-purple-50/40 hover:bg-purple-50/70 transition-colors border-l-2 border-purple-500"
+                              onClick={() => {
+                                if (enrolled && onOpenQuiz) {
+                                  onOpenQuiz(quiz);
+                                }
+                              }}
+                              className={`px-5 py-3 flex items-center justify-between text-xs bg-purple-50/40 hover:bg-purple-50/70 transition-colors border-l-2 border-purple-500 ${
+                                enrolled && onOpenQuiz ? "cursor-pointer" : ""
+                              }`}
                             >
                               <div className="flex items-center gap-2.5 text-slate-800">
                                 <HelpCircle className="w-4 h-4 text-purple-600 shrink-0" />
@@ -320,6 +345,11 @@ export const CourseDetailModal: React.FC<CourseDetailModalProps> = ({
                                 <span className="text-[10px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full">
                                   Quiz • {quiz.questionsCount || quiz.questions?.length || 0} Qs • {quiz.totalMarks || 0} pts
                                 </span>
+                                {enrolled && onOpenQuiz && (
+                                  <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded-md transition-colors">
+                                    Take Quiz →
+                                  </span>
+                                )}
                               </div>
                             </div>
                           ))}

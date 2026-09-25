@@ -34,6 +34,8 @@ interface LmsContextType {
   
   // Course actions
   getCourseById: (courseId: string) => Course | undefined;
+  fetchCourseById: (courseId: string) => Promise<Course | undefined>;
+  fetchStudentEnrollments: (userId: string) => Promise<void>;
   approveCourse: (courseId: string) => Promise<{ success: boolean; course?: Course; message?: string }>;
   rejectCourse: (courseId: string, reason?: string) => Promise<{ success: boolean; course?: Course; message?: string }>;
   createCourse: (newCourse: Partial<Course>) => Promise<{ success: boolean; course?: Course; message?: string }>;
@@ -201,8 +203,83 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const fetchStudentEnrollments = async (userId: string) => {
+    if (!userId) return;
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const res = await fetch(`/api/mongo/enrollments/${userId}`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.enrollments)) {
+          const mongoEnrollments: Enrollment[] = data.enrollments.map((e: any) => ({
+            _id: e.enrollmentId || e._id,
+            studentId: e.studentId,
+            courseId: e.courseId,
+            progressPercent: e.progressPercent || 0,
+            completedLectures: e.completedLectures || [],
+            lastWatchedLectureId: e.lastWatchedLectureId,
+            lastWatchedPositionSeconds: e.lastWatchedPositionSeconds || 0,
+            paymentId: e.paymentId || "pay_verified",
+            enrolledAt: e.enrolledAt || new Date().toISOString(),
+            certificateIssued: e.certificateIssued || false,
+            certificateId: e.certificateId,
+          }));
+
+          setEnrollments((prev) => {
+            const existingKeys = new Set(prev.map((e) => `${e.studentId}_${e.courseId}`));
+            const newOnes = mongoEnrollments.filter((e) => !existingKeys.has(`${e.studentId}_${e.courseId}`));
+            const updated = prev.map((e) => {
+              const matched = mongoEnrollments.find(
+                (me) => me.studentId === e.studentId && me.courseId === e.courseId
+              );
+              return matched ? { ...e, ...matched } : e;
+            });
+            return [...updated, ...newOnes];
+          });
+        }
+      }
+    } catch (err) {
+      console.warn("Could not fetch student enrollments from backend API:", err);
+    }
+  };
+
+  const fetchCourseById = async (courseId: string): Promise<Course | undefined> => {
+    if (!courseId) return undefined;
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const res = await fetch(`/api/courses/${courseId}`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.course) {
+          const freshCourse: Course = data.course;
+          setCourses((prev) => {
+            const exists = prev.some((c) => c._id === freshCourse._id);
+            if (exists) {
+              return prev.map((c) => (c._id === freshCourse._id ? { ...c, ...freshCourse } : c));
+            } else {
+              return [freshCourse, ...prev];
+            }
+          });
+          return freshCourse;
+        }
+      }
+    } catch (err) {
+      console.warn(`Failed to fetch fresh course data for ${courseId}:`, err);
+    }
+    return courses.find((c) => c._id === courseId);
+  };
+
   useEffect(() => {
     fetchMongoCourses();
+    if (currentUser?._id) {
+      fetchStudentEnrollments(currentUser._id);
+    }
   }, [currentUser]);
 
   const getCourseById = (courseId: string) => {
@@ -520,8 +597,10 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const getEnrollmentForCourse = (courseId: string) => {
     if (!currentUser) return undefined;
+    const course = courses.find((c) => c._id === courseId || (c.courseId && c.courseId === courseId));
+    const altId = course?._id || course?.courseId;
     return enrollments.find(
-      (e) => e.courseId === courseId && e.studentId === currentUser._id
+      (e) => (e.courseId === courseId || (altId && e.courseId === altId)) && e.studentId === currentUser._id
     );
   };
 
@@ -1177,6 +1256,8 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         certificates,
         payments,
         getCourseById,
+        fetchCourseById,
+        fetchStudentEnrollments,
         approveCourse,
         rejectCourse,
         createCourse,

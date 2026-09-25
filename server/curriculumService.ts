@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import { connectMongoDB } from "./db.js";
 import { MongoCourse } from "./models/Course.js";
+import { MongoQuiz } from "./models/Quiz.js";
 
 /**
  * Updates the curriculum (sections and lectures) for a course in MongoDB.
@@ -53,14 +54,55 @@ export async function updateCourseCurriculumInDb(
     throw err;
   }
 
+  // Preserve and merge existing section quizzes from MongoQuiz collection
+  const finalCourseId = course.courseId || courseId;
+  const quizzes = await MongoQuiz.find({ courseId: finalCourseId }).lean();
+  const quizzesBySection = new Map<string, any[]>();
+  for (const q of quizzes) {
+    if (!quizzesBySection.has(q.sectionId)) {
+      quizzesBySection.set(q.sectionId, []);
+    }
+    const totalMarks = Array.isArray(q.questions)
+      ? q.questions.reduce((sum: number, quest: any) => sum + (Number(quest.marks) || 1), 0)
+      : 0;
+    quizzesBySection.get(q.sectionId)!.push({
+      quizId: q.quizId,
+      courseId: q.courseId,
+      sectionId: q.sectionId,
+      title: q.title,
+      description: q.description || "",
+      questionsCount: Array.isArray(q.questions) ? q.questions.length : 0,
+      totalMarks,
+      createdAt: q.createdAt,
+    });
+  }
+
+  const enrichedSections = sections.map((sec: any) => {
+    const secId = sec.sectionId || sec._id;
+    const mongoQuizzes = quizzesBySection.get(secId) || [];
+    const mergedMap = new Map<string, any>();
+    if (Array.isArray(sec.quizzes)) {
+      for (const sq of sec.quizzes) {
+        if (sq?.quizId) mergedMap.set(sq.quizId, sq);
+      }
+    }
+    for (const mq of mongoQuizzes) {
+      mergedMap.set(mq.quizId, mq);
+    }
+    return {
+      ...sec,
+      quizzes: Array.from(mergedMap.values()),
+    };
+  });
+
   // Sanitize and save sections
-  course.sections = sections;
+  course.sections = enrichedSections;
   course.updatedAt = new Date().toISOString();
   course.markModified("sections");
 
   await course.save();
 
-  console.log(`✅ [Curriculum Updated] Course "${course.title}" (${course.courseId}) sections: ${sections.length}`);
+  console.log(`✅ [Curriculum Updated] Course "${course.title}" (${course.courseId}) sections: ${enrichedSections.length}`);
 
   const courseObj: any = course.toObject();
 

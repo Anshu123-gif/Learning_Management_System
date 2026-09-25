@@ -50,14 +50,30 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
     saveVideoProgress,
     getQuizForCourse,
     getCertificateForCourse,
+    fetchCourseById,
   } = useLms();
+
+  const [activeCourse, setActiveCourse] = useState<Course>(course);
+
+  useEffect(() => {
+    setActiveCourse(course);
+    let isMounted = true;
+    fetchCourseById(course._id).then((fresh) => {
+      if (isMounted && fresh) {
+        setActiveCourse(fresh);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [course._id, course.updatedAt, fetchCourseById]);
 
   const enrollment = getEnrollmentForCourse(course._id);
   const quiz = getQuizForCourse(course._id);
   const certificate = getCertificateForCourse(course._id);
 
   // Flatten all lectures to easily navigate
-  const allLectures = course.sections.flatMap((s) => s.lectures);
+  const allLectures = activeCourse.sections.flatMap((s) => s.lectures);
 
   // Default to last watched lecture or first lecture
   const [currentLectureId, setCurrentLectureId] = useState<string>(() => {
@@ -72,7 +88,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
   const currentLecture =
     allLectures.find((l) => l._id === currentLectureId) || allLectures[0];
 
-  const currentSection = course.sections.find((s) =>
+  const currentSection = activeCourse.sections.find((s) =>
     s.lectures.some((l) => l._id === currentLectureId)
   );
 
@@ -1297,7 +1313,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
           </div>
 
           <div className="overflow-y-auto flex-1 divide-y divide-slate-800/80">
-            {course.sections.map((section) => (
+            {activeCourse.sections.map((section) => (
               <div key={section._id}>
                 <div className="px-4 py-3 bg-slate-800/50 text-xs font-bold text-slate-300">
                   {section.title}

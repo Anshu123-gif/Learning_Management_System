@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
 import { connectMongoDB } from "../server/db.js";
 import { MongoCourse } from "../server/models/Course.js";
+import { MongoQuiz } from "../server/models/Quiz.js";
 import { MongoUser } from "../server/models/User.js";
 import { updateCourseCurriculumInDb } from "../server/curriculumService.js";
 import { uploadCourseThumbnail, deleteCourseThumbnail } from "../server/thumbnailService.js";
@@ -285,15 +286,172 @@ export async function getCoursesFromDb(filterOptions: {
   }
 
   const rawCourses = await MongoCourse.find(query).sort({ createdAt: -1 }).lean();
-  const courses = rawCourses.map((c: any) => ({
-    ...c,
-    _id: c.courseId || c._id,
-  }));
+  const courseIds = rawCourses.flatMap((c: any) => [c.courseId, String(c._id)].filter(Boolean));
+
+  // Authoritative join with MongoQuiz collection to ensure all section quizzes are present
+  const allQuizzes = await MongoQuiz.find({ courseId: { $in: courseIds } }).lean();
+  const quizzesByCourseAndSection = new Map<string, any[]>();
+  for (const q of allQuizzes) {
+    const key = `${q.courseId}_${q.sectionId}`;
+    if (!quizzesByCourseAndSection.has(key)) {
+      quizzesByCourseAndSection.set(key, []);
+    }
+    const totalMarks = Array.isArray(q.questions)
+      ? q.questions.reduce((sum: number, quest: any) => sum + (Number(quest.marks) || 1), 0)
+      : 0;
+    quizzesByCourseAndSection.get(key)!.push({
+      quizId: q.quizId,
+      courseId: q.courseId,
+      sectionId: q.sectionId,
+      title: q.title,
+      description: q.description || "",
+      questionsCount: Array.isArray(q.questions) ? q.questions.length : 0,
+      totalMarks,
+      createdAt: q.createdAt,
+    });
+  }
+
+  const courses = rawCourses.map((c: any) => {
+    const cId = c.courseId || c._id;
+    const sections = Array.isArray(c.sections)
+      ? c.sections.map((sec: any) => {
+          const secId = sec.sectionId || sec._id;
+          const candidateKeys = [
+            `${cId}_${secId}`,
+            `${c.courseId}_${sec._id}`,
+            `${c.courseId}_${sec.sectionId}`,
+            `${String(c._id)}_${sec._id}`,
+            `${String(c._id)}_${sec.sectionId}`,
+          ].filter(Boolean);
+
+          const matchedMongoQuizzes: any[] = [];
+          for (const k of candidateKeys) {
+            const list = quizzesByCourseAndSection.get(k);
+            if (list) {
+              matchedMongoQuizzes.push(...list);
+            }
+          }
+
+          // Merge existing sec.quizzes with quizzes from MongoQuiz collection
+          const mergedQuizzesMap = new Map<string, any>();
+          if (Array.isArray(sec.quizzes)) {
+            for (const sq of sec.quizzes) {
+              if (sq && sq.quizId) {
+                const { correctAnswer: _discard, ...safeSq } = sq;
+                mergedQuizzesMap.set(sq.quizId, safeSq);
+              }
+            }
+          }
+          for (const mq of matchedMongoQuizzes) {
+            const { correctAnswer: _discard, ...safeMq } = mq;
+            mergedQuizzesMap.set(mq.quizId, safeMq);
+          }
+
+          return {
+            ...sec,
+            quizzes: Array.from(mergedQuizzesMap.values()),
+          };
+        })
+      : [];
+
+    return {
+      ...c,
+      _id: cId,
+      sections,
+    };
+  });
 
   return {
     success: true,
     count: courses.length,
     courses,
+  };
+}
+
+/**
+ * Shared service helper for fetching a single course by ID from MongoDB with full curriculum & quizzes.
+ */
+export async function getCourseByIdFromDb(courseId: string) {
+  const connected = await connectMongoDB();
+  if (!connected) {
+    const err: any = new Error("Database service unavailable.");
+    err.statusCode = 503;
+    throw err;
+  }
+
+  let course = await MongoCourse.findOne({ courseId }).lean();
+  if (!course && mongoose.Types.ObjectId.isValid(courseId)) {
+    course = await MongoCourse.findById(courseId).lean();
+  }
+
+  if (!course) {
+    const err: any = new Error(`Course with ID "${courseId}" not found in database.`);
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const finalCourseId = (course as any).courseId || (course as any)._id;
+  const courseLookupIds = [finalCourseId, (course as any).courseId, String((course as any)._id), courseId].filter(Boolean);
+  const quizzes = await MongoQuiz.find({ courseId: { $in: courseLookupIds } }).lean();
+
+  const quizzesBySection = new Map<string, any[]>();
+  for (const q of quizzes) {
+    if (!quizzesBySection.has(q.sectionId)) {
+      quizzesBySection.set(q.sectionId, []);
+    }
+    const totalMarks = Array.isArray(q.questions)
+      ? q.questions.reduce((sum: number, quest: any) => sum + (Number(quest.marks) || 1), 0)
+      : 0;
+    quizzesBySection.get(q.sectionId)!.push({
+      quizId: q.quizId,
+      courseId: q.courseId,
+      sectionId: q.sectionId,
+      title: q.title,
+      description: q.description || "",
+      questionsCount: Array.isArray(q.questions) ? q.questions.length : 0,
+      totalMarks,
+      createdAt: q.createdAt,
+    });
+  }
+
+  const sections = Array.isArray((course as any).sections)
+    ? (course as any).sections.map((sec: any) => {
+        const secId = sec.sectionId || sec._id;
+        const matchedMongoQuizzes: any[] = [];
+        if (sec._id && quizzesBySection.has(sec._id)) {
+          matchedMongoQuizzes.push(...quizzesBySection.get(sec._id)!);
+        }
+        if (sec.sectionId && sec.sectionId !== sec._id && quizzesBySection.has(sec.sectionId)) {
+          matchedMongoQuizzes.push(...quizzesBySection.get(sec.sectionId)!);
+        }
+
+        const mergedMap = new Map<string, any>();
+        if (Array.isArray(sec.quizzes)) {
+          for (const sq of sec.quizzes) {
+            if (sq?.quizId) {
+              const { correctAnswer: _discard, ...safeSq } = sq;
+              mergedMap.set(sq.quizId, safeSq);
+            }
+          }
+        }
+        for (const mq of matchedMongoQuizzes) {
+          const { correctAnswer: _discard, ...safeMq } = mq;
+          mergedMap.set(mq.quizId, safeMq);
+        }
+        return {
+          ...sec,
+          quizzes: Array.from(mergedMap.values()),
+        };
+      })
+    : [];
+
+  return {
+    success: true,
+    course: {
+      ...course,
+      _id: finalCourseId,
+      sections,
+    },
   };
 }
 
@@ -310,13 +468,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).end();
   }
 
-  // 1. GET /api/courses
+  // 1. GET /api/courses or /api/courses/:id
   if (req.method === "GET") {
     try {
       const authHeader = req.headers.authorization;
       const all = req.query?.all as string;
       const myCourses = req.query?.myCourses as string;
       const status = req.query?.status as string;
+
+      // Check if querying a single course by id or path
+      let singleId = (req.query?.courseId as string) || (req.query?.id as string) || "";
+      if (!singleId && req.query?.path) {
+        const pathVal = Array.isArray(req.query.path) ? req.query.path[0] : req.query.path;
+        if (pathVal && pathVal !== "all" && pathVal !== "myCourses") {
+          singleId = pathVal;
+        }
+      }
+
+      if (singleId && singleId !== "undefined") {
+        const singleResult = await getCourseByIdFromDb(singleId);
+        return res.status(200).json(singleResult);
+      }
 
       const result = await getCoursesFromDb({
         authHeader,

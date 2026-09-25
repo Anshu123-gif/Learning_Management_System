@@ -168,6 +168,27 @@ const MainApp: React.FC = () => {
             setSelectedCourse(null);
             setLearningCourse(c);
           }}
+          onOpenQuiz={(q) => {
+            setActiveQuizForModal(q || null);
+            setQuizCourse(selectedCourse);
+          }}
+        />
+      )}
+
+      {/* Quiz / Exam Modal (when accessed outside active video classroom) */}
+      {quizCourse && (
+        <QuizModal
+          course={quizCourse}
+          quiz={activeQuizForModal}
+          onClose={() => {
+            setQuizCourse(null);
+            setActiveQuizForModal(null);
+          }}
+          onOpenCertificate={() => {
+            setCertCourse(quizCourse);
+            setQuizCourse(null);
+            setActiveQuizForModal(null);
+          }}
         />
       )}
 
