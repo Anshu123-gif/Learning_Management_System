@@ -94,10 +94,12 @@ async function startServer() {
     });
   }
 
-  // Initialize ONE Razorpay SDK client with credentials from environment variables
+  // Initialize ONE Razorpay SDK client with credentials from environment variables (or placeholder fallback)
+  const razorpayKeyId = process.env.RAZORPAY_KEY_ID || "rzp_test_placeholder";
+  const razorpayKeySecret = process.env.RAZORPAY_KEY_SECRET || "placeholder_secret";
   const razorpay = new Razorpay({
-    key_id: process.env.RAZORPAY_KEY_ID || "",
-    key_secret: process.env.RAZORPAY_KEY_SECRET || "",
+    key_id: razorpayKeyId,
+    key_secret: razorpayKeySecret,
   });
 
   // Health check endpoint

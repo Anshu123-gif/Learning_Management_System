@@ -16,6 +16,11 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    // Healthcheck connection test path
+    match /test/{docId} {
+      allow read: if true;
+    }
+
     // Users Collection: Users can read public profile or their own, and write their own profile
     match /users/{userId} {
       allow read: if true;
