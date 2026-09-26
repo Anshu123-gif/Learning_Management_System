@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   Play,
   Pause,
@@ -10,11 +10,14 @@ import {
   Maximize,
   Minimize,
   CheckCircle,
+  Circle,
   FileText,
   MessageSquare,
   Award,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Download,
   ShieldCheck,
   Sparkles,
@@ -24,8 +27,19 @@ import {
   Settings,
   FastForward,
   HelpCircle,
+  BookOpen,
+  Code,
+  Layers,
+  Check,
+  Copy,
+  Menu,
+  X,
+  ArrowLeft,
+  Home,
+  Clock,
+  Compass,
 } from "lucide-react";
-import { Course } from "../types";
+import { Course, SectionQuiz } from "../types";
 import { useLms } from "../context/LmsContext";
 import { DiscussionForum } from "./DiscussionForum";
 
@@ -34,6 +48,10 @@ interface VideoPlayerViewProps {
   onBack: () => void;
   onOpenQuiz: (quiz?: any) => void;
   onOpenCertificate: () => void;
+  onNavigateHome?: () => void;
+  onNavigateMyCourses?: () => void;
+  onNavigateCommunity?: () => void;
+  onNavigateCertificates?: () => void;
 }
 
 const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
@@ -43,6 +61,10 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
   onBack,
   onOpenQuiz,
   onOpenCertificate,
+  onNavigateHome,
+  onNavigateMyCourses,
+  onNavigateCommunity,
+  onNavigateCertificates,
 }) => {
   const {
     getEnrollmentForCourse,
@@ -51,6 +73,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
     getQuizForCourse,
     getCertificateForCourse,
     fetchCourseById,
+    quizAttempts,
   } = useLms();
 
   const [activeCourse, setActiveCourse] = useState<Course>(course);
@@ -73,7 +96,16 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
   const certificate = getCertificateForCourse(course._id);
 
   // Flatten all lectures to easily navigate
-  const allLectures = activeCourse.sections.flatMap((s) => s.lectures);
+  const allLectures = useMemo(
+    () => activeCourse.sections.flatMap((s) => s.lectures),
+    [activeCourse.sections]
+  );
+
+  // All section quizzes in course
+  const allSectionQuizzes: SectionQuiz[] = useMemo(
+    () => activeCourse.sections.flatMap((s) => s.quizzes || []),
+    [activeCourse.sections]
+  );
 
   // Default to last watched lecture or first lecture
   const [currentLectureId, setCurrentLectureId] = useState<string>(() => {
@@ -91,6 +123,33 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
   const currentSection = activeCourse.sections.find((s) =>
     s.lectures.some((l) => l._id === currentLectureId)
   );
+
+  // Collapsible section IDs state (default: active section expanded)
+  const [expandedSectionIds, setExpandedSectionIds] = useState<string[]>(() => {
+    const curSec = course.sections.find((s) =>
+      s.lectures.some((l) => l._id === currentLectureId)
+    );
+    return curSec ? [curSec._id] : [course.sections[0]?._id].filter(Boolean) as string[];
+  });
+
+  // Keep active section open when current lecture changes
+  useEffect(() => {
+    if (currentSection && !expandedSectionIds.includes(currentSection._id)) {
+      setExpandedSectionIds((prev) => [...prev, currentSection._id]);
+    }
+  }, [currentSection, expandedSectionIds]);
+
+  const toggleSection = (sectionId: string) => {
+    setExpandedSectionIds((prev) =>
+      prev.includes(sectionId)
+        ? prev.filter((id) => id !== sectionId)
+        : [...prev, sectionId]
+    );
+  };
+
+  // Mobile drawer states
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const [isMobileCurriculumOpen, setIsMobileCurriculumOpen] = useState(false);
 
   // References
   const playerContainerRef = useRef<HTMLDivElement>(null);
@@ -122,11 +181,19 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
   const [shortcutFeedback, setShortcutFeedback] = useState<string | null>(null);
   const [showUpNextPrompt, setShowUpNextPrompt] = useState(false);
 
-  // Tabs & Notes
-  const [activeTab, setActiveTab] = useState<"overview" | "resources" | "discussions" | "notes">("overview");
+  // Simple Tabs below video
+  type TabType = "notes" | "code" | "explanation" | "discussion" | "resources" | "practice";
+  const [activeTab, setActiveTab] = useState<TabType>("notes");
+
+  // Notes state
   const [personalNotes, setPersonalNotes] = useState<string>(() => {
     return localStorage.getItem(`notes_${course._id}`) || "";
   });
+  const [copiedNotes, setCopiedNotes] = useState(false);
+
+  // Practice state (interactive quick checks)
+  const [practiceAnswers, setPracticeAnswers] = useState<Record<string, number>>({});
+  const [copiedCode, setCopiedCode] = useState(false);
 
   // Dynamic Cloudinary Secure Stream Loading
   const [streamVideoUrl, setStreamVideoUrl] = useState<string>("");
@@ -194,7 +261,6 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
 
   // Switch lecture safely
   const switchLecture = useCallback((lectureId: string) => {
-    // 1. Save last position of exiting lecture
     if (videoRef.current && currentLectureId) {
       const exitingPos = Math.round(videoRef.current.currentTime);
       if (exitingPos > 0) {
@@ -203,7 +269,6 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
       }
     }
 
-    // 2. Reset player state for new lecture
     setIsPlaying(false);
     setCurrentTime(0);
     setDuration(0);
@@ -212,6 +277,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
     setResumeNotification(null);
     lastSavedPositionRef.current = 0;
     setCurrentLectureId(lectureId);
+    setIsMobileCurriculumOpen(false);
   }, [course._id, currentLectureId, saveVideoProgress]);
 
   const goToNext = useCallback(() => {
@@ -263,15 +329,12 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
           setStreamSource(data.source || "cloudinary");
           setStreamError("");
         } else {
-          // If backend couldn't generate Cloudinary signed url, check direct fallback
           if (currentLecture.videoUrl) {
             setStreamVideoUrl(currentLecture.videoUrl);
             setStreamSource("direct");
             setStreamError("");
           } else {
-            setStreamError(
-              data.message || "Video is not available for this lecture yet."
-            );
+            setStreamError(data.message || "Video is not available for this lecture yet.");
           }
         }
       } catch (err: any) {
@@ -303,11 +366,6 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
     const vidDuration = vid.duration || 0;
     setDuration(vidDuration);
 
-    // Look up saved position for this specific lecture:
-    // Priority:
-    // 1. Per-lecture positions in enrollment model
-    // 2. localStorage instant mirror: `edupulse_pos_${courseId}_${currentLectureId}`
-    // 3. Fallback: enrollment.lastWatchedPositionSeconds (if last watched lecture matches)
     let savedPos = 0;
     const localSaved = localStorage.getItem(`edupulse_pos_${course._id}_${currentLectureId}`);
     if (localSaved && !isNaN(Number(localSaved))) {
@@ -318,7 +376,6 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
       savedPos = enrollment.lastWatchedPositionSeconds;
     }
 
-    // Only resume if position is meaningful (e.g. > 2 seconds and not already at the very end)
     if (savedPos > 2 && (vidDuration === 0 || savedPos < vidDuration - 3)) {
       try {
         vid.currentTime = savedPos;
@@ -376,7 +433,6 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
     if (controlsTimeoutRef.current) {
       clearTimeout(controlsTimeoutRef.current);
     }
-    // Only auto-hide if playing and not seeking or interacting with speed menu
     if (isPlaying && !isDraggingSeek && !showSpeedMenu) {
       controlsTimeoutRef.current = setTimeout(() => {
         setShowControls(false);
@@ -384,12 +440,10 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
     }
   }, [isPlaying, isDraggingSeek, showSpeedMenu]);
 
-  // Handle user activity over player
   const handlePlayerMouseMove = () => {
     resetControlsTimeout();
   };
 
-  // Keep controls open when video is paused
   useEffect(() => {
     if (!isPlaying) {
       setShowControls(true);
@@ -413,7 +467,6 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
       videoRef.current.pause();
       setIsPlaying(false);
       triggerShortcutToast("Pause");
-      // Save position on pause
       const cur = Math.round(videoRef.current.currentTime);
       saveVideoProgress(course._id, currentLectureId, cur);
       localStorage.setItem(`edupulse_pos_${course._id}_${currentLectureId}`, String(cur));
@@ -501,7 +554,6 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
   // Safe Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Do not trigger if typing in input, textarea, or contentEditable
       const target = e.target as HTMLElement;
       if (
         target &&
@@ -553,7 +605,6 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
     const dur = videoRef.current.duration || 0;
     setCurrentTime(cur);
 
-    // Calculate buffered range
     if (videoRef.current.buffered.length > 0) {
       try {
         const end = videoRef.current.buffered.end(videoRef.current.buffered.length - 1);
@@ -572,7 +623,6 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
     }
   };
 
-  // Video Events: Video Progress (Buffer)
   const handleProgress = () => {
     if (!videoRef.current) return;
     if (videoRef.current.buffered.length > 0) {
@@ -583,18 +633,15 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
     }
   };
 
-  // Video Events: Video Ended
   const handleVideoEnded = () => {
     setIsPlaying(false);
     setShowControls(true);
     markLectureComplete(course._id, currentLectureId);
-    // Save final position
     if (videoRef.current) {
       const cur = Math.round(videoRef.current.currentTime);
       saveVideoProgress(course._id, currentLectureId, cur);
       localStorage.setItem(`edupulse_pos_${course._id}_${currentLectureId}`, String(cur));
     }
-    // Show Up Next overlay if there is a next lecture
     if (hasNext) {
       setShowUpNextPrompt(true);
     }
@@ -654,7 +701,85 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
   const playedPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
   const bufferedPercent = duration > 0 ? Math.min(100, (bufferedEnd / duration) * 100) : 0;
 
-  // Safe Empty Curriculum State (No sections or no lectures)
+  // Progress Calculations for Right Sidebar
+  const totalSectionsCount = activeCourse.sections.length;
+  const completedSectionsCount = activeCourse.sections.filter(
+    (s) =>
+      s.lectures.length > 0 &&
+      s.lectures.every((l) => enrollment?.completedLectures.includes(l._id))
+  ).length;
+
+  const totalLecturesCount = allLectures.length;
+  const completedLecturesCount = enrollment?.completedLectures.length || 0;
+
+  const totalQuizzesCount = allSectionQuizzes.length + (quiz ? 1 : 0);
+  const completedQuizzesCount = useMemo(() => {
+    const allQuizIds = [
+      ...allSectionQuizzes.map((q) => q.quizId || q._id),
+      ...(quiz ? [quiz.quizId || quiz._id] : []),
+    ];
+    return allQuizIds.filter((qId) =>
+      quizAttempts.some(
+        (a) =>
+          (a.quizId === qId || a._id === qId) &&
+          (a.completed || a.passed || a.score !== undefined)
+      )
+    ).length;
+  }, [allSectionQuizzes, quiz, quizAttempts]);
+
+  // Insert timestamp into notes
+  const handleInsertTimestampToNotes = () => {
+    const timestampTag = `[${formatTime(currentTime)}] `;
+    const updated = personalNotes ? `${personalNotes}\n${timestampTag}` : timestampTag;
+    setPersonalNotes(updated);
+    localStorage.setItem(`notes_${course._id}`, updated);
+  };
+
+  const handleCopyNotes = () => {
+    navigator.clipboard.writeText(personalNotes);
+    setCopiedNotes(true);
+    setTimeout(() => setCopiedNotes(false), 2000);
+  };
+
+  // Code Snippet Example for current lesson
+  const sampleCodeSnippet = useMemo(() => {
+    const cleanTitle = currentLecture?.title || "Lesson";
+    return `// Implementation for: ${cleanTitle}
+// Course: ${course.title}
+// Section: ${currentSection?.title || "Module"}
+
+export async function executeLessonSolution(params: { debug?: boolean } = {}) {
+  console.log("Initializing module for ${cleanTitle}...");
+  
+  const state = {
+    courseId: "${course._id}",
+    lectureId: "${currentLectureId}",
+    status: "active",
+    timestamp: new Date().toISOString()
+  };
+
+  if (params.debug) {
+    console.debug("[Debug Info]", state);
+  }
+
+  return {
+    success: true,
+    data: state,
+    message: "Module logic processed successfully."
+  };
+}
+
+// Auto-run example:
+// executeLessonSolution({ debug: true }).then(console.log);`;
+  }, [currentLecture?.title, course.title, course._id, currentLectureId, currentSection?.title]);
+
+  const handleCopyCode = () => {
+    navigator.clipboard.writeText(sampleCodeSnippet);
+    setCopiedCode(true);
+    setTimeout(() => setCopiedCode(false), 2000);
+  };
+
+  // Safe Empty Curriculum State
   if (allLectures.length === 0 || !currentLecture) {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
@@ -671,7 +796,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
           </div>
         </header>
 
-        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center max-w-lg mx-auto space-y-4 animate-in fade-in">
+        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center max-w-lg mx-auto space-y-4">
           <div className="w-16 h-16 rounded-2xl bg-indigo-950/60 border border-indigo-800/50 flex items-center justify-center text-indigo-400 shadow-xl">
             <Film className="w-8 h-8" />
           </div>
@@ -690,535 +815,916 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
     );
   }
 
+  // Current section quiz (if any)
+  const currentSectionQuiz = currentSection?.quizzes?.[0];
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans select-none">
-      {/* Top Header Bar with Real-Time Course Progress */}
-      <header className="h-14 bg-slate-900 border-b border-slate-800 px-4 sm:px-6 flex items-center justify-between shrink-0 z-30">
-        <div className="flex items-center gap-3 min-w-0">
+    <div className="h-screen w-full bg-[#090d16] text-slate-100 flex flex-col font-sans select-none overflow-hidden">
+      {/* ==================================================== */}
+      {/* MOBILE TOP BAR (Appears on screens < lg) */}
+      {/* ==================================================== */}
+      <div className="lg:hidden h-14 bg-[#0d131f] border-b border-slate-800 px-4 flex items-center justify-between shrink-0 z-30">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setIsMobileNavOpen(true)}
+            className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 transition-colors cursor-pointer"
+            aria-label="Open Navigation"
+          >
+            <Menu className="w-4 h-4" />
+          </button>
           <button
             onClick={onBack}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold transition-colors cursor-pointer"
+            className="flex items-center gap-1 text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
           >
             <ChevronLeft className="w-4 h-4" />
-            <span className="hidden sm:inline">Back</span>
+            <span className="truncate max-w-[120px]">{course.title}</span>
           </button>
-          <div className="truncate">
-            <h1 className="text-xs sm:text-sm font-bold text-white truncate max-w-xs sm:max-w-md md:max-w-xl">
-              {course.title}
-            </h1>
-            <div className="text-[11px] text-slate-400 truncate">
-              {currentSection?.title} • {currentLecture.title}
-            </div>
-          </div>
         </div>
 
-        {/* Course Progress Indicator */}
-        <div className="flex items-center gap-4 shrink-0">
-          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2.5 text-right sm:text-left">
-            <div className="flex items-center gap-1.5 justify-end">
-              <span className="text-[11px] text-slate-400 font-medium">Course Progress:</span>
-              <span className="text-xs font-bold text-indigo-400">
-                {enrollment?.progressPercent || 0}%
-              </span>
-            </div>
-            <div className="w-20 sm:w-28 bg-slate-800 h-1.5 rounded-full overflow-hidden">
-              <div
-                className="bg-indigo-500 h-full rounded-full transition-all duration-500 ease-out shadow-[0_0_8px_rgba(99,102,241,0.6)]"
-                style={{ width: `${enrollment?.progressPercent || 0}%` }}
-              />
-            </div>
-            <span className="text-[10px] text-slate-400 hidden md:inline">
-              ({enrollment?.completedLectures.length || 0} of {allLectures.length} completed)
-            </span>
-          </div>
-
-          {/* Certificate or Exam Action */}
-          {certificate ? (
-            <button
-              onClick={onOpenCertificate}
-              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-lg flex items-center gap-1.5 transition-colors shadow-xs shadow-amber-500/20 cursor-pointer"
-            >
-              <Award className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Certificate</span>
-            </button>
-          ) : enrollment?.progressPercent === 100 && quiz ? (
-            <button
-              onClick={onOpenQuiz}
-              className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs rounded-lg flex items-center gap-1.5 transition-colors shadow-xs shadow-emerald-500/20 animate-pulse cursor-pointer"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Take Exam</span>
-            </button>
-          ) : null}
-        </div>
-      </header>
-
-      {/* Main Learning Workspace */}
-      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-        {/* Left Column: Video Player & Tabs */}
-        <div className="flex-1 flex flex-col overflow-y-auto bg-slate-950">
-          {/* ==================================================== */}
-          {/* PROFESSIONAL LMS VIDEO PLAYER CONTAINER */}
-          {/* ==================================================== */}
-          <div
-            ref={playerContainerRef}
-            onMouseMove={handlePlayerMouseMove}
-            onPointerMove={handlePlayerMouseMove}
-            onMouseLeave={() => {
-              if (isPlaying && !showSpeedMenu && !isDraggingSeek) {
-                setShowControls(false);
-              }
-            }}
-            className={`relative aspect-video bg-black w-full flex items-center justify-center select-none overflow-hidden group ${
-              !showControls && isPlaying ? "cursor-none" : "cursor-default"
-            }`}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setIsMobileCurriculumOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600/90 hover:bg-indigo-600 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors cursor-pointer"
           >
-            {isLoadingStream ? (
-              <div className="flex flex-col items-center justify-center gap-3 text-slate-300">
-                <div className="w-10 h-10 border-3 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-                <span className="text-xs font-mono font-medium tracking-wide">
-                  Loading video stream...
+            <Layers className="w-3.5 h-3.5" />
+            <span>Curriculum ({completedLecturesCount}/{totalLecturesCount})</span>
+          </button>
+        </div>
+      </div>
+
+      {/* ==================================================== */}
+      {/* MAIN 3-PART LEARNING WORKSPACE */}
+      {/* ==================================================== */}
+      <div className="flex-1 flex overflow-hidden relative">
+        {/* ==================================================== */}
+        {/* PART 1: LEFT SIDEBAR (Course Navigation) */}
+        {/* ==================================================== */}
+        {/* Desktop Left Sidebar */}
+        <aside className="w-64 shrink-0 bg-[#0d131f] border-r border-slate-800 flex flex-col hidden lg:flex select-none">
+          {/* Top Brand / Navigation Group */}
+          <div className="p-3 border-b border-slate-800/80 space-y-1">
+            <button
+              onClick={onNavigateHome || onBack}
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/70 transition-colors cursor-pointer"
+            >
+              <Home className="w-4 h-4 text-slate-400" />
+              <span>Home</span>
+            </button>
+            <button
+              onClick={onNavigateMyCourses || onBack}
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/70 transition-colors cursor-pointer"
+            >
+              <BookOpen className="w-4 h-4 text-slate-400" />
+              <span>My Courses</span>
+            </button>
+            <button
+              onClick={onNavigateCommunity || (() => setActiveTab("discussion"))}
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/70 transition-colors cursor-pointer"
+            >
+              <MessageSquare className="w-4 h-4 text-slate-400" />
+              <span>Community</span>
+            </button>
+            <button
+              onClick={onNavigateCertificates || onOpenCertificate}
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/70 transition-colors cursor-pointer"
+            >
+              <Award className="w-4 h-4 text-amber-400" />
+              <span>Certificates</span>
+            </button>
+          </div>
+
+          {/* Back to My Courses Action */}
+          <div className="px-3 pt-3">
+            <button
+              onClick={onNavigateMyCourses || onBack}
+              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-slate-300 hover:text-white hover:bg-slate-800/50 transition-colors cursor-pointer"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Back to My Courses</span>
+            </button>
+          </div>
+
+          {/* Current Course Summary Card */}
+          <div className="p-3 mx-3 my-2 bg-slate-900/90 border border-slate-800 rounded-xl space-y-2.5">
+            <div className="relative aspect-video w-full rounded-lg overflow-hidden bg-slate-800">
+              <img
+                src={activeCourse.thumbnail || activeCourse.thumbnailUrl}
+                alt={activeCourse.title}
+                referrerPolicy="no-referrer"
+                className="w-full h-full object-cover"
+                onError={(e) => {
+                  (e.target as HTMLElement).style.display = "none";
+                }}
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-2 pointer-events-none">
+                <span className="text-[10px] font-medium text-white/90 truncate">
+                  {activeCourse.category}
                 </span>
               </div>
-            ) : streamError ? (
-              <div className="p-6 text-center max-w-md space-y-3">
-                <AlertCircle className="w-10 h-10 text-amber-500 mx-auto" />
-                <h3 className="text-sm font-bold text-white">Video Unavailable</h3>
-                <p className="text-xs text-slate-400">{streamError}</p>
+            </div>
+
+            <div className="space-y-1">
+              <h2 className="text-xs font-bold text-white line-clamp-2 leading-snug">
+                {activeCourse.title}
+              </h2>
+              <div className="text-[11px] text-slate-400 truncate">
+                Instructor: {activeCourse.instructorName}
+              </div>
+            </div>
+
+            {/* Course Progress Minimal Indicator */}
+            <div className="space-y-1 pt-1 border-t border-slate-800/80">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-slate-400">Progress</span>
+                <span className="font-bold text-indigo-400">
+                  {enrollment?.progressPercent || 0}%
+                </span>
+              </div>
+              <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-indigo-500 rounded-full transition-all duration-300"
+                  style={{ width: `${enrollment?.progressPercent || 0}%` }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Course-Related Navigation */}
+          <div className="p-3 space-y-1 flex-1 overflow-y-auto">
+            <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+              Course Navigation
+            </div>
+
+            <button
+              onClick={() => {
+                const el = document.getElementById("right-curriculum-panel");
+                if (el) el.scrollIntoView({ behavior: "smooth" });
+              }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/70 transition-colors cursor-pointer text-left"
+            >
+              <Layers className="w-4 h-4 text-slate-400" />
+              <span>Course Content</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab("notes")}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer text-left ${
+                activeTab === "notes"
+                  ? "bg-indigo-600/20 text-indigo-300 font-semibold"
+                  : "text-slate-300 hover:text-white hover:bg-slate-800/70"
+              }`}
+            >
+              <FileText className="w-4 h-4" />
+              <span>Notes</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab("discussion")}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer text-left ${
+                activeTab === "discussion"
+                  ? "bg-indigo-600/20 text-indigo-300 font-semibold"
+                  : "text-slate-300 hover:text-white hover:bg-slate-800/70"
+              }`}
+            >
+              <HelpCircle className="w-4 h-4" />
+              <span>Q&A</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab("resources")}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer text-left ${
+                activeTab === "resources"
+                  ? "bg-indigo-600/20 text-indigo-300 font-semibold"
+                  : "text-slate-300 hover:text-white hover:bg-slate-800/70"
+              }`}
+            >
+              <Download className="w-4 h-4" />
+              <span>Resources ({currentLecture.resources?.length || 0})</span>
+            </button>
+          </div>
+        </aside>
+
+        {/* Mobile Left Drawer Backdrop & Drawer */}
+        {isMobileNavOpen && (
+          <div className="fixed inset-0 z-50 lg:hidden flex">
+            <div
+              className="fixed inset-0 bg-black/70 backdrop-blur-xs animate-in fade-in"
+              onClick={() => setIsMobileNavOpen(false)}
+            />
+            <div className="relative w-72 max-w-[80vw] bg-[#0d131f] border-r border-slate-800 h-full flex flex-col z-50 p-4 space-y-4 animate-in slide-in-from-left duration-200">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                <span className="text-xs font-bold text-white uppercase tracking-wider">
+                  Menu
+                </span>
                 <button
-                  onClick={() => {
-                    setCurrentLectureId((prev) => prev);
-                  }}
-                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded-lg transition-colors cursor-pointer"
+                  onClick={() => setIsMobileNavOpen(false)}
+                  className="p-1 rounded text-slate-400 hover:text-white"
                 >
-                  Retry Loading
+                  <X className="w-5 h-5" />
                 </button>
               </div>
-            ) : streamVideoUrl ? (
-              <>
-                {/* Standard HTML5 <video> Element */}
-                <video
-                  ref={videoRef}
-                  src={streamVideoUrl}
-                  playsInline
-                  onClick={togglePlay}
-                  onLoadedMetadata={handleLoadedMetadata}
-                  onTimeUpdate={handleTimeUpdate}
-                  onProgress={handleProgress}
-                  onPlay={() => setIsPlaying(true)}
-                  onPause={() => setIsPlaying(false)}
-                  onEnded={handleVideoEnded}
-                  onError={() => {
-                    setStreamError("Unable to load this video. Please try again.");
+
+              <div className="space-y-1">
+                <button
+                  onClick={() => {
+                    setIsMobileNavOpen(false);
+                    if (onNavigateHome) onNavigateHome();
+                    else onBack();
                   }}
-                  className="w-full h-full object-contain cursor-pointer"
-                />
-
-                {/* Keyboard Shortcut & Action Flash Toast Indicator */}
-                {shortcutFeedback && (
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
-                    <div className="bg-black/80 backdrop-blur-md px-5 py-2.5 rounded-xl border border-white/15 text-white font-mono text-sm font-bold shadow-2xl flex items-center gap-2 animate-in zoom-in-95 duration-150">
-                      <span>{shortcutFeedback}</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* Resume Playback Notification Banner */}
-                {resumeNotification && (
-                  <div className="absolute top-4 left-4 z-20 bg-slate-900/90 backdrop-blur-md border border-indigo-500/40 text-white text-xs px-3 py-2 rounded-xl shadow-xl flex items-center gap-3 animate-in fade-in slide-in-from-top-2">
-                    <span className="text-indigo-400 font-semibold">{resumeNotification}</span>
-                    <button
-                      onClick={() => {
-                        if (videoRef.current) {
-                          videoRef.current.currentTime = 0;
-                          setCurrentTime(0);
-                          setResumeNotification(null);
-                        }
-                      }}
-                      className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-[11px] rounded text-slate-300 hover:text-white transition-colors cursor-pointer"
-                    >
-                      Start from beginning
-                    </button>
-                  </div>
-                )}
-
-                {/* Top Video Header Overlay (Title & Stream Provider Badge) */}
-                <div
-                  className={`absolute top-0 inset-x-0 bg-gradient-to-b from-black/80 via-black/30 to-transparent p-3 sm:p-4 flex items-center justify-between transition-opacity duration-300 z-10 ${
-                    showControls ? "opacity-100" : "opacity-0 pointer-events-none"
-                  }`}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-medium text-slate-200 hover:bg-slate-800"
                 >
-                  <div className="text-xs font-semibold text-white/90 truncate max-w-sm sm:max-w-md drop-shadow">
-                    {currentLecture.title}
-                  </div>
-                  <div className="bg-slate-900/80 backdrop-blur-md px-2.5 py-1 rounded-md text-[10px] font-mono text-emerald-400 flex items-center gap-1.5 border border-emerald-500/20 shadow-md">
-                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>
-                      {streamSource === "cloudinary"
-                        ? "Cloudinary • Authorized Stream"
-                        : "Direct Video Stream"}
-                    </span>
-                  </div>
+                  <Home className="w-4 h-4" /> Home
+                </button>
+                <button
+                  onClick={() => {
+                    setIsMobileNavOpen(false);
+                    if (onNavigateMyCourses) onNavigateMyCourses();
+                    else onBack();
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-medium text-slate-200 hover:bg-slate-800"
+                >
+                  <BookOpen className="w-4 h-4" /> My Courses
+                </button>
+                <button
+                  onClick={() => {
+                    setIsMobileNavOpen(false);
+                    if (onNavigateCommunity) onNavigateCommunity();
+                    else setActiveTab("discussion");
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-medium text-slate-200 hover:bg-slate-800"
+                >
+                  <MessageSquare className="w-4 h-4" /> Community
+                </button>
+                <button
+                  onClick={() => {
+                    setIsMobileNavOpen(false);
+                    if (onNavigateCertificates) onNavigateCertificates();
+                    else onOpenCertificate();
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-medium text-slate-200 hover:bg-slate-800"
+                >
+                  <Award className="w-4 h-4 text-amber-400" /> Certificates
+                </button>
+              </div>
+
+              <div className="pt-2 border-t border-slate-800">
+                <button
+                  onClick={() => {
+                    setIsMobileNavOpen(false);
+                    if (onNavigateMyCourses) onNavigateMyCourses();
+                    else onBack();
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-slate-300 hover:bg-slate-800"
+                >
+                  <ArrowLeft className="w-4 h-4" /> Back to My Courses
+                </button>
+              </div>
+
+              <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl space-y-2">
+                <div className="text-xs font-bold text-white line-clamp-1">{activeCourse.title}</div>
+                <div className="text-[11px] text-slate-400">{activeCourse.instructorName}</div>
+                <div className="flex justify-between text-[11px] font-medium pt-1 border-t border-slate-800">
+                  <span className="text-slate-400">Progress</span>
+                  <span className="text-indigo-400 font-bold">{enrollment?.progressPercent || 0}%</span>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
 
-                {/* Big Center Play Button Overlay when Paused */}
-                {!isPlaying && (
+        {/* ==================================================== */}
+        {/* PART 2: CENTER CONTENT (Current Lesson + Video + Tabs) */}
+        {/* ==================================================== */}
+        <main className="flex-1 flex flex-col overflow-y-auto bg-[#090d16] select-text">
+          {/* Clean Top Header & Breadcrumbs */}
+          <div className="px-4 sm:px-6 pt-4 pb-3 border-b border-slate-800/80 bg-[#090d16]/95 sticky top-0 z-20 backdrop-blur-md space-y-2">
+            {/* Breadcrumb: My Courses → Course → Section → Lesson */}
+            <div className="flex items-center gap-1.5 text-[11px] text-slate-400 truncate">
+              <button
+                onClick={onNavigateMyCourses || onBack}
+                className="hover:text-white transition-colors cursor-pointer shrink-0"
+              >
+                My Courses
+              </button>
+              <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
+              <span className="truncate max-w-[120px] sm:max-w-[200px] text-slate-400">
+                {activeCourse.title}
+              </span>
+              <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
+              <span className="truncate max-w-[120px] sm:max-w-[180px] text-slate-400">
+                {currentSection?.title}
+              </span>
+              <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
+              <span className="text-slate-200 font-medium truncate max-w-[150px] sm:max-w-[240px]">
+                {currentLecture.title}
+              </span>
+            </div>
+
+            {/* Lesson Title and Navigation Controls */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-0.5">
+              <div className="min-w-0">
+                <h1 className="text-base sm:text-lg font-bold text-white truncate tracking-tight">
+                  {currentLecture.title}
+                </h1>
+                {/* Lesson Progress Visible */}
+                <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
+                  <span className="text-slate-300 font-medium">Current lesson:</span>
+                  <span className="font-mono tabular-nums text-slate-200">
+                    {formatTime(currentTime)} / {formatTime(duration || currentLecture.durationMinutes * 60)}
+                  </span>
+                  {isCompleted && (
+                    <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 font-semibold ml-1">
+                      <CheckCircle className="w-3 h-3" /> Completed
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Prev / Next Lesson Buttons */}
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={goToPrev}
+                  disabled={!hasPrev}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none text-xs font-semibold text-slate-200 flex items-center gap-1 transition-colors cursor-pointer border border-slate-700/60"
+                  title="Previous lesson"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  <span>Previous</span>
+                </button>
+                <button
+                  onClick={goToNext}
+                  disabled={!hasNext}
+                  className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:pointer-events-none text-xs font-bold text-white flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+                  title="Next lesson"
+                >
+                  <span>Next Lesson</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* LARGE VIDEO PLAYER (The Primary Focus - Clean & Uncluttered) */}
+          <div className="w-full bg-black relative flex items-center justify-center">
+            <div
+              ref={playerContainerRef}
+              onMouseMove={handlePlayerMouseMove}
+              onPointerMove={handlePlayerMouseMove}
+              onMouseLeave={() => {
+                if (isPlaying && !showSpeedMenu && !isDraggingSeek) {
+                  setShowControls(false);
+                }
+              }}
+              className={`relative aspect-video bg-black w-full max-w-5xl mx-auto flex items-center justify-center select-none overflow-hidden group ${
+                !showControls && isPlaying ? "cursor-none" : "cursor-default"
+              }`}
+            >
+              {isLoadingStream ? (
+                <div className="flex flex-col items-center justify-center gap-3 text-slate-300">
+                  <div className="w-10 h-10 border-3 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-xs font-mono font-medium tracking-wide">
+                    Loading video stream...
+                  </span>
+                </div>
+              ) : streamError ? (
+                <div className="p-6 text-center max-w-md space-y-3">
+                  <AlertCircle className="w-10 h-10 text-amber-500 mx-auto" />
+                  <h3 className="text-sm font-bold text-white">Video Unavailable</h3>
+                  <p className="text-xs text-slate-400">{streamError}</p>
                   <button
-                    onClick={togglePlay}
-                    className="absolute inset-0 m-auto w-16 h-16 rounded-full bg-indigo-600/90 hover:bg-indigo-500 text-white flex items-center justify-center shadow-2xl backdrop-blur-xs border border-white/20 transition-transform transform hover:scale-110 active:scale-95 z-10 cursor-pointer"
-                    aria-label="Play video"
+                    onClick={() => {
+                      setCurrentLectureId((prev) => prev);
+                    }}
+                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded-lg transition-colors cursor-pointer"
                   >
-                    <Play className="w-7 h-7 fill-white ml-1" />
+                    Retry Loading
                   </button>
-                )}
+                </div>
+              ) : streamVideoUrl ? (
+                <>
+                  {/* Standard HTML5 <video> Element */}
+                  <video
+                    ref={videoRef}
+                    src={streamVideoUrl}
+                    playsInline
+                    onClick={togglePlay}
+                    onLoadedMetadata={handleLoadedMetadata}
+                    onTimeUpdate={handleTimeUpdate}
+                    onProgress={handleProgress}
+                    onPlay={() => setIsPlaying(true)}
+                    onPause={() => setIsPlaying(false)}
+                    onEnded={handleVideoEnded}
+                    onError={() => {
+                      setStreamError("Unable to load this video. Please try again.");
+                    }}
+                    className="w-full h-full object-contain cursor-pointer"
+                  />
 
-                {/* Up Next Overlay on Video End */}
-                {showUpNextPrompt && hasNext && nextLecture && (
-                  <div className="absolute inset-0 bg-black/85 backdrop-blur-xs z-20 flex flex-col items-center justify-center p-6 text-center space-y-4 animate-in fade-in">
-                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 text-xs font-bold">
-                      <CheckCircle className="w-3.5 h-3.5" />
-                      <span>Lecture Completed!</span>
+                  {/* Keyboard Shortcut Flash Toast */}
+                  {shortcutFeedback && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
+                      <div className="bg-black/80 backdrop-blur-md px-5 py-2.5 rounded-xl border border-white/15 text-white font-mono text-sm font-bold shadow-2xl flex items-center gap-2 animate-in zoom-in-95 duration-150">
+                        <span>{shortcutFeedback}</span>
+                      </div>
                     </div>
-                    <div className="space-y-1 max-w-md">
-                      <span className="text-xs text-slate-400 font-medium">Up Next</span>
-                      <h3 className="text-base sm:text-lg font-bold text-white line-clamp-2">
-                        {nextLecture.title}
-                      </h3>
-                    </div>
-                    <div className="flex items-center gap-3 pt-2">
+                  )}
+
+                  {/* Resume Notification Banner */}
+                  {resumeNotification && (
+                    <div className="absolute top-4 left-4 z-20 bg-slate-900/90 backdrop-blur-md border border-indigo-500/40 text-white text-xs px-3 py-2 rounded-xl shadow-xl flex items-center gap-3 animate-in fade-in slide-in-from-top-2">
+                      <span className="text-indigo-400 font-semibold">{resumeNotification}</span>
                       <button
                         onClick={() => {
-                          setShowUpNextPrompt(false);
                           if (videoRef.current) {
                             videoRef.current.currentTime = 0;
-                            videoRef.current.play().catch(() => {});
+                            setCurrentTime(0);
+                            setResumeNotification(null);
                           }
                         }}
-                        className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                        className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-[11px] rounded text-slate-300 hover:text-white transition-colors cursor-pointer"
                       >
-                        <RotateCcw className="w-3.5 h-3.5" /> Replay
-                      </button>
-                      <button
-                        onClick={goToNext}
-                        className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg shadow-lg shadow-indigo-600/30 transition-all flex items-center gap-2 cursor-pointer"
-                      >
-                        <span>Play Next Lecture</span>
-                        <ChevronRight className="w-4 h-4" />
+                        Start from beginning
                       </button>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {/* ==================================================== */}
-                {/* BOTTOM CONTROLS OVERLAY */}
-                {/* ==================================================== */}
-                <div
-                  className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent px-3 py-2 sm:px-4 sm:py-3 transition-opacity duration-300 z-10 flex flex-col gap-2 ${
-                    showControls ? "opacity-100" : "opacity-0 pointer-events-none"
-                  }`}
-                >
-                  {/* Clickable and Draggable Scrub / Seek Bar */}
+                  {/* Top Minimal Video Overlay */}
                   <div
-                    ref={progressBarRef}
-                    onPointerDown={handlePointerDownSeek}
-                    onPointerMove={handlePointerMoveSeek}
-                    onPointerUp={handlePointerUpSeek}
-                    onMouseLeave={() => setHoverSeekTime(null)}
-                    className="relative w-full h-5 flex items-center cursor-pointer group/seek touch-none"
+                    className={`absolute top-0 inset-x-0 bg-gradient-to-b from-black/80 via-black/30 to-transparent p-3 sm:p-4 flex items-center justify-between transition-opacity duration-300 z-10 ${
+                      showControls ? "opacity-100" : "opacity-0 pointer-events-none"
+                    }`}
                   >
-                    {/* Hover Timestamp Tooltip */}
-                    {hoverSeekTime !== null && duration > 0 && (
-                      <div
-                        className="absolute bottom-6 -translate-x-1/2 bg-slate-900 border border-slate-700 px-2 py-0.5 rounded text-[10px] font-mono text-white shadow-xl pointer-events-none z-30"
-                        style={{ left: `${hoverSeekPosPercent}%` }}
-                      >
-                        {formatTime(hoverSeekTime)}
-                      </div>
-                    )}
-
-                    {/* Progress Rail Track */}
-                    <div className="w-full h-1 group-hover/seek:h-2 transition-all duration-150 bg-slate-700/70 rounded-full relative overflow-hidden">
-                      {/* Buffered Portion */}
-                      <div
-                        className="absolute inset-y-0 left-0 bg-slate-500/50 rounded-full transition-all duration-200"
-                        style={{ width: `${bufferedPercent}%` }}
-                      />
-                      {/* Watched / Played Portion */}
-                      <div
-                        className="absolute inset-y-0 left-0 bg-indigo-500 rounded-full transition-all duration-75 ease-out shadow-[0_0_10px_rgba(99,102,241,0.8)]"
-                        style={{ width: `${playedPercent}%` }}
-                      />
+                    <div className="text-xs font-semibold text-white/90 truncate max-w-sm sm:max-w-md drop-shadow">
+                      {currentLecture.title}
                     </div>
-
-                    {/* Scrubber Handle / Thumb */}
-                    <div
-                      className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 bg-white rounded-full shadow-lg border-2 border-indigo-600 scale-0 group-hover/seek:scale-100 transition-transform pointer-events-none"
-                      style={{ left: `${playedPercent}%` }}
-                    />
+                    <div className="bg-slate-900/80 backdrop-blur-md px-2.5 py-1 rounded-md text-[10px] font-mono text-emerald-400 flex items-center gap-1.5 border border-emerald-500/20 shadow-md">
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>
+                        {streamSource === "cloudinary"
+                          ? "Cloudinary • Authorized Stream"
+                          : "Direct Video Stream"}
+                      </span>
+                    </div>
                   </div>
 
-                  {/* Main Controls Row */}
-                  <div className="flex items-center justify-between text-xs text-white">
-                    {/* Left Controls: Play/Pause, Rewind, Forward, Volume, Time */}
-                    <div className="flex items-center gap-2 sm:gap-3">
-                      {/* Play / Pause */}
-                      <button
-                        onClick={togglePlay}
-                        className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors cursor-pointer"
-                        title={isPlaying ? "Pause (Space/k)" : "Play (Space/k)"}
-                        aria-label={isPlaying ? "Pause" : "Play"}
-                      >
-                        {isPlaying ? (
-                          <Pause className="w-4 h-4 fill-white" />
-                        ) : (
-                          <Play className="w-4 h-4 fill-white ml-0.5" />
-                        )}
-                      </button>
+                  {/* Big Center Play Button Overlay when Paused */}
+                  {!isPlaying && (
+                    <button
+                      onClick={togglePlay}
+                      className="absolute inset-0 m-auto w-16 h-16 rounded-full bg-indigo-600/90 hover:bg-indigo-500 text-white flex items-center justify-center shadow-2xl backdrop-blur-xs border border-white/20 transition-transform transform hover:scale-110 active:scale-95 z-10 cursor-pointer"
+                      aria-label="Play video"
+                    >
+                      <Play className="w-7 h-7 fill-white ml-1" />
+                    </button>
+                  )}
 
-                      {/* 10s Rewind */}
-                      <button
-                        onClick={() => seekRelative(-10)}
-                        className="text-slate-300 hover:text-white transition-colors cursor-pointer p-1"
-                        title="Rewind 10 seconds (← 5s)"
-                      >
-                        <RotateCcw className="w-4 h-4" />
-                      </button>
-
-                      {/* 10s Forward */}
-                      <button
-                        onClick={() => seekRelative(10)}
-                        className="text-slate-300 hover:text-white transition-colors cursor-pointer p-1"
-                        title="Forward 10 seconds (→ 5s)"
-                      >
-                        <RotateCw className="w-4 h-4" />
-                      </button>
-
-                      {/* Volume Slider & Mute Toggle */}
-                      <div className="flex items-center gap-1.5 group/vol">
+                  {/* Up Next Prompt on Video End */}
+                  {showUpNextPrompt && hasNext && nextLecture && (
+                    <div className="absolute inset-0 bg-black/85 backdrop-blur-xs z-20 flex flex-col items-center justify-center p-6 text-center space-y-4 animate-in fade-in">
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 text-xs font-bold">
+                        <CheckCircle className="w-3.5 h-3.5" />
+                        <span>Lecture Completed!</span>
+                      </div>
+                      <div className="space-y-1 max-w-md">
+                        <span className="text-xs text-slate-400 font-medium">Up Next</span>
+                        <h3 className="text-base sm:text-lg font-bold text-white line-clamp-2">
+                          {nextLecture.title}
+                        </h3>
+                      </div>
+                      <div className="flex items-center gap-3 pt-2">
                         <button
-                          onClick={handleToggleMute}
-                          className="text-slate-300 hover:text-white transition-colors cursor-pointer p-1"
-                          title={isMuted ? "Unmute (m)" : "Mute (m)"}
+                          onClick={() => {
+                            setShowUpNextPrompt(false);
+                            if (videoRef.current) {
+                              videoRef.current.currentTime = 0;
+                              videoRef.current.play().catch(() => {});
+                            }
+                          }}
+                          className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
                         >
-                          {isMuted || volume === 0 ? (
-                            <VolumeX className="w-4 h-4 text-rose-400" />
-                          ) : volume < 0.5 ? (
-                            <Volume1 className="w-4 h-4" />
-                          ) : (
-                            <Volume2 className="w-4 h-4" />
-                          )}
+                          <RotateCcw className="w-3.5 h-3.5" /> Replay
                         </button>
-                        <input
-                          type="range"
-                          min={0}
-                          max={1}
-                          step={0.05}
-                          value={isMuted ? 0 : volume}
-                          onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
-                          className="w-14 sm:w-20 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500 transition-all"
-                          title={`Volume: ${Math.round((isMuted ? 0 : volume) * 100)}%`}
+                        <button
+                          onClick={goToNext}
+                          className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg shadow-lg shadow-indigo-600/30 transition-all flex items-center gap-2 cursor-pointer"
+                        >
+                          <span>Play Next Lecture</span>
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* BOTTOM CONTROLS OVERLAY */}
+                  <div
+                    className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent px-3 py-2 sm:px-4 sm:py-3 transition-opacity duration-300 z-10 flex flex-col gap-2 ${
+                      showControls ? "opacity-100" : "opacity-0 pointer-events-none"
+                    }`}
+                  >
+                    {/* Scrub / Seek Bar */}
+                    <div
+                      ref={progressBarRef}
+                      onPointerDown={handlePointerDownSeek}
+                      onPointerMove={handlePointerMoveSeek}
+                      onPointerUp={handlePointerUpSeek}
+                      onMouseLeave={() => setHoverSeekTime(null)}
+                      className="relative w-full h-5 flex items-center cursor-pointer group/seek touch-none"
+                    >
+                      {hoverSeekTime !== null && duration > 0 && (
+                        <div
+                          className="absolute bottom-6 -translate-x-1/2 bg-slate-900 border border-slate-700 px-2 py-0.5 rounded text-[10px] font-mono text-white shadow-xl pointer-events-none z-30"
+                          style={{ left: `${hoverSeekPosPercent}%` }}
+                        >
+                          {formatTime(hoverSeekTime)}
+                        </div>
+                      )}
+
+                      <div className="w-full h-1 group-hover/seek:h-2 transition-all duration-150 bg-slate-700/70 rounded-full relative overflow-hidden">
+                        <div
+                          className="absolute inset-y-0 left-0 bg-slate-500/50 rounded-full transition-all duration-200"
+                          style={{ width: `${bufferedPercent}%` }}
+                        />
+                        <div
+                          className="absolute inset-y-0 left-0 bg-indigo-500 rounded-full transition-all duration-75 ease-out shadow-[0_0_10px_rgba(99,102,241,0.8)]"
+                          style={{ width: `${playedPercent}%` }}
                         />
                       </div>
 
-                      {/* Current Time / Total Duration */}
-                      <div className="text-slate-300 font-mono text-[11px] select-none ml-1">
-                        <span className="text-white font-medium">{formatTime(currentTime)}</span>
-                        <span className="text-slate-500 mx-1">/</span>
-                        <span>{formatTime(duration)}</span>
-                      </div>
+                      <div
+                        className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 bg-white rounded-full shadow-lg border-2 border-indigo-600 scale-0 group-hover/seek:scale-100 transition-transform pointer-events-none"
+                        style={{ left: `${playedPercent}%` }}
+                      />
                     </div>
 
-                    {/* Right Controls: Next Lecture, Speed Selector, PiP, Fullscreen */}
-                    <div className="flex items-center gap-2 sm:gap-3">
-                      {/* Next Lecture Quick Trigger */}
-                      {hasNext && (
+                    {/* Main Controls Row */}
+                    <div className="flex items-center justify-between text-xs text-white">
+                      <div className="flex items-center gap-2 sm:gap-3">
                         <button
-                          onClick={goToNext}
-                          className="hidden sm:flex items-center gap-1 text-[11px] text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-700/80 px-2.5 py-1 rounded-md transition-colors cursor-pointer"
-                          title="Skip to next lecture"
+                          onClick={togglePlay}
+                          className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors cursor-pointer"
+                          title={isPlaying ? "Pause (Space/k)" : "Play (Space/k)"}
+                          aria-label={isPlaying ? "Pause" : "Play"}
                         >
-                          <span>Next</span>
-                          <FastForward className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-
-                      {/* Playback Speed Selector Popover */}
-                      <div className="relative">
-                        <button
-                          onClick={() => setShowSpeedMenu(!showSpeedMenu)}
-                          className="px-2 py-1 bg-slate-800/80 hover:bg-slate-700 text-slate-200 hover:text-white rounded-md text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
-                          title="Playback Speed"
-                        >
-                          <span>{playbackSpeed}x</span>
-                          <Settings className="w-3 h-3 text-slate-400" />
+                          {isPlaying ? (
+                            <Pause className="w-4 h-4 fill-white" />
+                          ) : (
+                            <Play className="w-4 h-4 fill-white ml-0.5" />
+                          )}
                         </button>
 
-                        {showSpeedMenu && (
-                          <div className="absolute bottom-full right-0 mb-2 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl p-1.5 w-24 flex flex-col gap-0.5 z-40 animate-in fade-in zoom-in-95">
-                            <div className="text-[10px] text-slate-400 font-bold px-2 py-1 border-b border-slate-800">
-                              Speed
-                            </div>
-                            {SPEED_OPTIONS.map((spd) => (
-                              <button
-                                key={spd}
-                                onClick={() => changePlaybackSpeed(spd)}
-                                className={`px-2 py-1 rounded text-left text-[11px] font-medium transition-colors cursor-pointer flex items-center justify-between ${
-                                  playbackSpeed === spd
-                                    ? "bg-indigo-600 text-white font-bold"
-                                    : "text-slate-300 hover:bg-slate-800 hover:text-white"
-                                }`}
-                              >
-                                <span>{spd}x</span>
-                                {playbackSpeed === spd && <CheckCircle className="w-3 h-3" />}
-                              </button>
-                            ))}
-                          </div>
-                        )}
+                        <button
+                          onClick={() => seekRelative(-10)}
+                          className="text-slate-300 hover:text-white transition-colors cursor-pointer p-1"
+                          title="Rewind 10 seconds"
+                        >
+                          <RotateCcw className="w-4 h-4" />
+                        </button>
+
+                        <button
+                          onClick={() => seekRelative(10)}
+                          className="text-slate-300 hover:text-white transition-colors cursor-pointer p-1"
+                          title="Forward 10 seconds"
+                        >
+                          <RotateCw className="w-4 h-4" />
+                        </button>
+
+                        {/* Volume Control */}
+                        <div className="flex items-center gap-1.5 group/vol">
+                          <button
+                            onClick={handleToggleMute}
+                            className="text-slate-300 hover:text-white transition-colors cursor-pointer p-1"
+                            title={isMuted ? "Unmute (m)" : "Mute (m)"}
+                          >
+                            {isMuted || volume === 0 ? (
+                              <VolumeX className="w-4 h-4 text-rose-400" />
+                            ) : volume < 0.5 ? (
+                              <Volume1 className="w-4 h-4" />
+                            ) : (
+                              <Volume2 className="w-4 h-4" />
+                            )}
+                          </button>
+                          <input
+                            type="range"
+                            min={0}
+                            max={1}
+                            step={0.05}
+                            value={isMuted ? 0 : volume}
+                            onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
+                            className="w-14 sm:w-20 h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500 transition-all"
+                            title={`Volume: ${Math.round((isMuted ? 0 : volume) * 100)}%`}
+                          />
+                        </div>
+
+                        {/* Current Time / Duration Display */}
+                        <div className="text-slate-300 font-mono text-[11px] select-none ml-1">
+                          <span className="text-white font-medium">{formatTime(currentTime)}</span>
+                          <span className="text-slate-500 mx-1">/</span>
+                          <span>{formatTime(duration)}</span>
+                        </div>
                       </div>
 
-                      {/* Picture-in-Picture */}
-                      {isPipAvailable && (
-                        <button
-                          onClick={togglePictureInPicture}
-                          className="text-slate-300 hover:text-white transition-colors cursor-pointer p-1"
-                          title="Picture-in-Picture"
-                        >
-                          <Tv className="w-4 h-4" />
-                        </button>
-                      )}
+                      {/* Right Controls */}
+                      <div className="flex items-center gap-2 sm:gap-3">
+                        {/* Speed Menu */}
+                        <div className="relative">
+                          <button
+                            onClick={() => setShowSpeedMenu(!showSpeedMenu)}
+                            className="px-2 py-1 bg-slate-800/80 hover:bg-slate-700 text-slate-200 hover:text-white rounded-md text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                            title="Playback Speed"
+                          >
+                            <span>{playbackSpeed}x</span>
+                            <Settings className="w-3 h-3 text-slate-400" />
+                          </button>
 
-                      {/* Fullscreen */}
-                      <button
-                        onClick={toggleFullscreen}
-                        className="text-slate-300 hover:text-white transition-colors cursor-pointer p-1"
-                        title={isFullscreen ? "Exit Fullscreen (f)" : "Fullscreen (f)"}
-                        aria-label="Toggle Fullscreen"
-                      >
-                        {isFullscreen ? (
-                          <Minimize className="w-4 h-4" />
-                        ) : (
-                          <Maximize className="w-4 h-4" />
+                          {showSpeedMenu && (
+                            <div className="absolute bottom-full right-0 mb-2 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl p-1.5 w-24 flex flex-col gap-0.5 z-40 animate-in fade-in zoom-in-95">
+                              <div className="text-[10px] text-slate-400 font-bold px-2 py-1 border-b border-slate-800">
+                                Speed
+                              </div>
+                              {SPEED_OPTIONS.map((spd) => (
+                                <button
+                                  key={spd}
+                                  onClick={() => changePlaybackSpeed(spd)}
+                                  className={`px-2 py-1 rounded text-left text-[11px] font-medium transition-colors cursor-pointer flex items-center justify-between ${
+                                    playbackSpeed === spd
+                                      ? "bg-indigo-600 text-white font-bold"
+                                      : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                                  }`}
+                                >
+                                  <span>{spd}x</span>
+                                  {playbackSpeed === spd && <CheckCircle className="w-3 h-3" />}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* PiP */}
+                        {isPipAvailable && (
+                          <button
+                            onClick={togglePictureInPicture}
+                            className="text-slate-300 hover:text-white transition-colors cursor-pointer p-1"
+                            title="Picture-in-Picture"
+                          >
+                            <Tv className="w-4 h-4" />
+                          </button>
                         )}
-                      </button>
+
+                        {/* Fullscreen */}
+                        <button
+                          onClick={toggleFullscreen}
+                          className="text-slate-300 hover:text-white transition-colors cursor-pointer p-1"
+                          title={isFullscreen ? "Exit Fullscreen (f)" : "Fullscreen (f)"}
+                          aria-label="Toggle Fullscreen"
+                        >
+                          {isFullscreen ? (
+                            <Minimize className="w-4 h-4" />
+                          ) : (
+                            <Maximize className="w-4 h-4" />
+                          )}
+                        </button>
+                      </div>
                     </div>
                   </div>
+                </>
+              ) : (
+                <div className="p-6 text-center max-w-md space-y-2 text-slate-400">
+                  <Film className="w-8 h-8 mx-auto text-slate-500" />
+                  <p className="text-xs">No video stream loaded.</p>
                 </div>
-              </>
-            ) : (
-              <div className="p-6 text-center max-w-md space-y-2 text-slate-400">
-                <Film className="w-8 h-8 mx-auto text-slate-500" />
-                <p className="text-xs">No video stream loaded.</p>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
-          {/* ==================================================== */}
-          {/* LECTURE HEADER & NAVIGATION CONTROLS */}
-          {/* ==================================================== */}
-          <div className="p-4 sm:p-6 bg-slate-900/60 border-b border-slate-800/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="space-y-1">
-              <div className="text-xs text-indigo-400 font-semibold">
-                {currentSection?.title}
-              </div>
-              <h2 className="text-lg sm:text-xl font-bold text-white">
-                {currentLecture.title}
-              </h2>
-            </div>
-
-            <div className="flex items-center gap-2.5 w-full sm:w-auto justify-between sm:justify-end">
+          {/* Quick Lecture Completion Action Strip directly under video */}
+          <div className="px-4 sm:px-6 py-2.5 bg-[#0b0f19] border-b border-slate-800/80 flex items-center justify-between text-xs">
+            <div className="flex items-center gap-2">
               <button
                 onClick={() => markLectureComplete(course._id, currentLectureId)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
                   isCompleted
-                    ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"
-                    : "bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700"
+                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                    : "bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700"
                 }`}
               >
                 <CheckCircle className="w-3.5 h-3.5" />
                 <span>{isCompleted ? "Completed" : "Mark as Completed"}</span>
               </button>
+            </div>
 
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={goToPrev}
-                  disabled={!hasPrev}
-                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none text-xs font-medium text-slate-300 flex items-center gap-1 transition-colors cursor-pointer"
-                >
-                  <ChevronLeft className="w-3.5 h-3.5" /> Prev
-                </button>
-                <button
-                  onClick={goToNext}
-                  disabled={!hasNext}
-                  className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:pointer-events-none text-xs font-bold text-white flex items-center gap-1 shadow-sm transition-colors cursor-pointer"
-                >
-                  Next <ChevronRight className="w-3.5 h-3.5" />
-                </button>
+            <div className="flex items-center gap-3 text-[11px] text-slate-400">
+              <span>Section: {currentSection?.title}</span>
+              <span>·</span>
+              <span>Duration: {currentLecture.durationMinutes}m</span>
+            </div>
+          </div>
+
+          {/* ==================================================== */}
+          {/* SIMPLE TABS BELOW VIDEO */}
+          {/* Exactly one tab visually active */}
+          {/* ==================================================== */}
+          <div className="border-b border-slate-800 bg-[#0d131f] px-4 sm:px-6 shrink-0">
+            <div className="flex items-center gap-1 sm:gap-2 overflow-x-auto scrollbar-none py-1">
+              {[
+                { id: "notes", label: "Notes", icon: FileText },
+                { id: "code", label: "Code Files", icon: Code },
+                { id: "explanation", label: "Explanation", icon: BookOpen },
+                { id: "discussion", label: "Discussion", icon: MessageSquare },
+                { id: "resources", label: `Resources (${currentLecture.resources?.length || 0})`, icon: Download },
+                { id: "practice", label: "Practice", icon: HelpCircle },
+              ].map((tab) => {
+                const Icon = tab.icon;
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id as TabType)}
+                    className={`px-3.5 py-2.5 rounded-md text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
+                      isActive
+                        ? "bg-indigo-600/20 text-indigo-400 border-b-2 border-indigo-500 font-bold"
+                        : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/40"
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    <span>{tab.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* TAB CONTENTS (Clean & Focused) */}
+          <div className="p-4 sm:p-6 flex-1 max-w-4xl">
+            {/* TAB 1: NOTES */}
+            {activeTab === "notes" && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Lecture Notes</h3>
+                    <p className="text-[11px] text-slate-400">
+                      Personal notes for this course. Automatically saved to your device.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleInsertTimestampToNotes}
+                      className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                      title="Insert current video timestamp"
+                    >
+                      <Clock className="w-3 h-3 text-indigo-400" />
+                      <span>Timestamp ({formatTime(currentTime)})</span>
+                    </button>
+                    <button
+                      onClick={handleCopyNotes}
+                      className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      {copiedNotes ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-400" />
+                          <span>Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          <span>Copy</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <textarea
+                  value={personalNotes}
+                  onChange={(e) => {
+                    setPersonalNotes(e.target.value);
+                    localStorage.setItem(`notes_${course._id}`, e.target.value);
+                  }}
+                  placeholder="Take notes while watching the video. Click 'Timestamp' above to bookmark key moments in the lecture..."
+                  rows={10}
+                  className="w-full bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 text-xs text-slate-200 focus:outline-hidden focus:border-indigo-500 font-mono leading-relaxed"
+                />
+
+                <div className="flex items-center justify-between text-[11px] text-slate-400">
+                  <span>Characters: {personalNotes.length}</span>
+                  <button
+                    onClick={() => {
+                      if (window.confirm("Clear all notes for this course?")) {
+                        setPersonalNotes("");
+                        localStorage.removeItem(`notes_${course._id}`);
+                      }
+                    }}
+                    className="text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
+                  >
+                    Clear notes
+                  </button>
+                </div>
               </div>
-            </div>
-          </div>
+            )}
 
-          {/* Interactive Learning Tabs */}
-          <div className="border-b border-slate-800 bg-slate-900/40 px-4 sm:px-6">
-            <div className="flex gap-6 text-xs font-semibold overflow-x-auto scrollbar-none">
-              <button
-                onClick={() => setActiveTab("overview")}
-                className={`py-3 border-b-2 transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
-                  activeTab === "overview"
-                    ? "border-indigo-500 text-indigo-400"
-                    : "border-transparent text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <FileText className="w-4 h-4" /> Overview
-              </button>
+            {/* TAB 2: CODE FILES */}
+            {activeTab === "code" && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Lesson Code & Solution</h3>
+                    <p className="text-[11px] text-slate-400">
+                      Starter template and reference implementation for this lesson.
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleCopyCode}
+                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    {copiedCode ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Copied Code</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copy Code</span>
+                      </>
+                    )}
+                  </button>
+                </div>
 
-              <button
-                onClick={() => setActiveTab("resources")}
-                className={`py-3 border-b-2 transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
-                  activeTab === "resources"
-                    ? "border-indigo-500 text-indigo-400"
-                    : "border-transparent text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <Download className="w-4 h-4" /> Resources ({currentLecture.resources?.length || 0})
-              </button>
+                {/* Code Editor Box */}
+                <div className="rounded-xl border border-slate-800 bg-slate-950 overflow-hidden font-mono text-xs shadow-md">
+                  <div className="px-4 py-2 bg-slate-900 border-b border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
+                    <span className="flex items-center gap-1.5">
+                      <Code className="w-3.5 h-3.5 text-indigo-400" />
+                      solution.ts
+                    </span>
+                    <span>TypeScript</span>
+                  </div>
+                  <pre className="p-4 text-slate-300 overflow-x-auto text-[11px] leading-relaxed">
+                    <code>{sampleCodeSnippet}</code>
+                  </pre>
+                </div>
 
-              <button
-                onClick={() => setActiveTab("discussions")}
-                className={`py-3 border-b-2 transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
-                  activeTab === "discussions"
-                    ? "border-indigo-500 text-indigo-400"
-                    : "border-transparent text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <MessageSquare className="w-4 h-4" /> Q&A Discussion
-              </button>
+                {/* Attached code resources */}
+                {currentLecture.resources?.filter((r) => r.fileType === "code").length > 0 && (
+                  <div className="space-y-2 pt-2">
+                    <h4 className="text-xs font-bold text-slate-300">Attached Code Files</h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {currentLecture.resources
+                        .filter((r) => r.fileType === "code")
+                        .map((res, i) => (
+                          <div
+                            key={i}
+                            className="p-3 bg-slate-900 border border-slate-800 rounded-lg flex items-center justify-between text-xs"
+                          >
+                            <span className="font-medium text-white truncate mr-2">{res.title}</span>
+                            <button
+                              onClick={() => alert(`Simulating download of ${res.title}`)}
+                              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] rounded flex items-center gap-1 cursor-pointer"
+                            >
+                              <Download className="w-3 h-3" /> Get
+                            </button>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
-              <button
-                onClick={() => setActiveTab("notes")}
-                className={`py-3 border-b-2 transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
-                  activeTab === "notes"
-                    ? "border-indigo-500 text-indigo-400"
-                    : "border-transparent text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <FileText className="w-4 h-4" /> Personal Notes
-              </button>
-            </div>
-          </div>
+            {/* TAB 3: EXPLANATION */}
+            {activeTab === "explanation" && (
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <h3 className="text-sm font-bold text-white">Lesson Overview</h3>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    {currentLecture.description ||
+                      `In this lecture "${currentLecture.title}", we explore core concepts, industry standard architectures, and step-by-step implementation code for production systems.`}
+                  </p>
+                </div>
 
-          {/* Tab Contents */}
-          <div className="p-4 sm:p-6 flex-1">
-            {activeTab === "overview" && (
-              <div className="space-y-4 max-w-3xl">
-                <h3 className="text-sm font-bold text-white">About this lecture</h3>
-                <p className="text-xs text-slate-300 leading-relaxed">
-                  {currentLecture.description ||
-                    "In this lecture, we explore core concepts, industry standard architectures, and step-by-step implementation code for production systems."}
-                </p>
+                <div className="space-y-2 pt-2">
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                    Key Takeaways
+                  </h4>
+                  <ul className="space-y-1.5 text-xs text-slate-300">
+                    <li className="flex items-start gap-2">
+                      <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      <span>Mastery of the core patterns introduced in {currentSection?.title}.</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      <span>Practical hands-on implementation matching real-world engineering standards.</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      <span>Preparation for the accompanying section quiz and final certification exam.</span>
+                    </li>
+                  </ul>
+                </div>
 
-                <div className="pt-4 border-t border-slate-800/80 space-y-3">
-                  <h4 className="text-xs font-bold text-indigo-300 uppercase tracking-wider">
-                    Cloudinary Video Delivery Metadata
+                {/* Video Delivery Technical Metadata */}
+                <div className="pt-4 border-t border-slate-800/80 space-y-2">
+                  <h4 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                    Video Stream Details
                   </h4>
                   <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 text-xs font-mono text-slate-300 space-y-1">
                     <div>
@@ -1226,185 +1732,471 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
                       {currentLecture.videoPublicId || currentLecture.videoKey || "Direct Delivery"}
                     </div>
                     <div>
-                      <span className="text-slate-500">Stream Protocol:</span> Cloudinary Signed Adaptive HTTPS
+                      <span className="text-slate-500">Protocol:</span> Cloudinary Signed Adaptive Delivery
                     </div>
                     <div>
-                      <span className="text-slate-500">Delivery Status:</span> Active & Authenticated
+                      <span className="text-slate-500">Status:</span> Active & Authenticated
                     </div>
                   </div>
                 </div>
               </div>
             )}
 
+            {/* TAB 4: DISCUSSION */}
+            {activeTab === "discussion" && (
+              <div className="space-y-4">
+                <DiscussionForum courseId={course._id} lectureId={currentLectureId} />
+              </div>
+            )}
+
+            {/* TAB 5: RESOURCES */}
             {activeTab === "resources" && (
-              <div className="space-y-3 max-w-2xl">
+              <div className="space-y-4">
                 <h3 className="text-sm font-bold text-white">Lecture Downloads</h3>
                 {currentLecture.resources && currentLecture.resources.length > 0 ? (
-                  currentLecture.resources.map((res, i) => (
-                    <div
-                      key={i}
-                      className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center justify-between text-xs"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold uppercase text-[10px]">
-                          {res.fileType}
-                        </div>
-                        <div>
-                          <div className="font-semibold text-white">{res.title}</div>
-                          <div className="text-[10px] text-slate-400">
-                            {res.sizeMb} MB • Verified file
+                  <div className="space-y-2">
+                    {currentLecture.resources.map((res, i) => (
+                      <div
+                        key={i}
+                        className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center justify-between text-xs"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold uppercase text-[10px]">
+                            {res.fileType}
+                          </div>
+                          <div>
+                            <div className="font-semibold text-white">{res.title}</div>
+                            <div className="text-[10px] text-slate-400">
+                              {res.sizeMb} MB • Verified file
+                            </div>
                           </div>
                         </div>
+                        <button
+                          onClick={() => alert(`Simulating download of ${res.title}`)}
+                          className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Download className="w-3.5 h-3.5" /> Download
+                        </button>
                       </div>
-                      <button
-                        onClick={() => alert(`Simulating download of ${res.title}`)}
-                        className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
-                      >
-                        <Download className="w-3.5 h-3.5" /> Download
-                      </button>
-                    </div>
-                  ))
+                    ))}
+                  </div>
                 ) : (
-                  <p className="text-xs text-slate-500 italic">
+                  <p className="text-xs text-slate-400 italic">
                     No downloadable assets attached to this lecture.
                   </p>
                 )}
               </div>
             )}
 
-            {activeTab === "discussions" && (
-              <div className="max-w-4xl">
-                <DiscussionForum courseId={course._id} lectureId={currentLectureId} />
-              </div>
-            )}
-
-            {activeTab === "notes" && (
-              <div className="space-y-3 max-w-2xl">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-bold text-white">Private Scratchpad</h3>
-                  <span className="text-[11px] text-slate-400">Auto-saved locally</span>
+            {/* TAB 6: PRACTICE */}
+            {activeTab === "practice" && (
+              <div className="space-y-5">
+                <div>
+                  <h3 className="text-sm font-bold text-white">Quick Practice & Knowledge Check</h3>
+                  <p className="text-[11px] text-slate-400">
+                    Test your understanding of the concepts covered in this lesson.
+                  </p>
                 </div>
-                <textarea
-                  value={personalNotes}
-                  onChange={(e) => {
-                    setPersonalNotes(e.target.value);
-                    localStorage.setItem(`notes_${course._id}`, e.target.value);
-                  }}
-                  placeholder="Record your code snippets, architecture observations, and exam prep notes here..."
-                  rows={8}
-                  className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3.5 text-xs text-slate-200 focus:outline-hidden focus:ring-1 focus:ring-indigo-500 font-mono"
-                />
+
+                {/* Interactive Practice Question 1 */}
+                <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl space-y-3">
+                  <div className="text-xs font-bold text-white">
+                    1. What is the primary purpose of breaking application logic into modular sections?
+                  </div>
+                  <div className="space-y-1.5">
+                    {[
+                      "To increase code complexity and execution overhead",
+                      "To improve maintainability, testability, and separation of concerns",
+                      "To restrict code reuse across features",
+                      "To bypass type safety in TypeScript",
+                    ].map((opt, optIndex) => {
+                      const selected = practiceAnswers["q1"] === optIndex;
+                      const isCorrectOption = optIndex === 1;
+                      return (
+                        <button
+                          key={optIndex}
+                          onClick={() => setPracticeAnswers((prev) => ({ ...prev, q1: optIndex }))}
+                          className={`w-full text-left p-2.5 rounded-lg text-xs transition-colors flex items-center justify-between cursor-pointer ${
+                            selected
+                              ? isCorrectOption
+                                ? "bg-emerald-950/60 border border-emerald-500/50 text-emerald-200"
+                                : "bg-rose-950/60 border border-rose-500/50 text-rose-200"
+                              : "bg-slate-800/60 hover:bg-slate-800 text-slate-300"
+                          }`}
+                        >
+                          <span>{opt}</span>
+                          {selected && (
+                            <span className="text-[11px] font-bold">
+                              {isCorrectOption ? "✓ Correct" : "✗ Review lesson"}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Section Quiz Prompt if Available */}
+                {currentSectionQuiz && (
+                  <div className="p-4 bg-amber-950/20 border border-amber-500/30 rounded-xl space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                          QUIZ
+                        </span>
+                        <h4 className="text-xs font-bold text-amber-200">
+                          {currentSectionQuiz.title}
+                        </h4>
+                      </div>
+                      <span className="text-[11px] font-mono text-amber-300">
+                        {currentSectionQuiz.totalMarks || 10} pts
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-300">
+                      Ready to test your knowledge for {currentSection?.title}? Take the official section quiz now.
+                    </p>
+                    <button
+                      onClick={() => onOpenQuiz(currentSectionQuiz)}
+                      className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Start Section Quiz</span>
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
-        </div>
+        </main>
 
         {/* ==================================================== */}
-        {/* RIGHT COLUMN: COURSE CURRICULUM ACCORDION */}
+        {/* PART 3: RIGHT SIDEBAR (Compact Course Progress & Curriculum) */}
         {/* ==================================================== */}
-        <div className="w-full lg:w-96 bg-slate-900 border-t lg:border-t-0 lg:border-l border-slate-800 flex flex-col h-[500px] lg:h-auto shrink-0">
-          <div className="p-4 border-b border-slate-800 bg-slate-900/90 sticky top-0 z-10 flex items-center justify-between">
-            <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+        <aside
+          id="right-curriculum-panel"
+          className="w-80 shrink-0 bg-[#0d131f] border-l border-slate-800 flex flex-col hidden lg:flex select-none"
+        >
+          {/* Top Progress Box */}
+          <div className="p-4 border-b border-slate-800 space-y-3 bg-[#0d131f]">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-400">Course Progress</span>
+              <span className="text-sm font-bold text-indigo-400">
+                {enrollment?.progressPercent || 0}%
+              </span>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+              <div
+                className="bg-indigo-500 h-full rounded-full transition-all duration-500 ease-out"
+                style={{ width: `${enrollment?.progressPercent || 0}%` }}
+              />
+            </div>
+
+            {/* Stat Counters: Sections, Lessons, Quizzes */}
+            <div className="grid grid-cols-3 gap-2 pt-1 text-center font-mono text-[11px]">
+              <div className="bg-slate-900 border border-slate-800/80 rounded-lg p-2">
+                <div className="text-white font-bold">
+                  {completedSectionsCount} / {totalSectionsCount}
+                </div>
+                <div className="text-[10px] text-slate-400">Sections</div>
+              </div>
+              <div className="bg-slate-900 border border-slate-800/80 rounded-lg p-2">
+                <div className="text-white font-bold">
+                  {completedLecturesCount} / {totalLecturesCount}
+                </div>
+                <div className="text-[10px] text-slate-400">Lessons</div>
+              </div>
+              <div className="bg-slate-900 border border-slate-800/80 rounded-lg p-2">
+                <div className="text-white font-bold">
+                  {completedQuizzesCount} / {totalQuizzesCount}
+                </div>
+                <div className="text-[10px] text-slate-400">Quizzes</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Course Content Header */}
+          <div className="px-4 py-2.5 border-b border-slate-800/80 bg-slate-900/50 flex items-center justify-between">
+            <span className="text-xs font-bold text-white uppercase tracking-wider">
               Course Content
-            </h3>
-            <span className="text-xs text-indigo-400 font-bold">
-              {enrollment?.completedLectures.length || 0} / {allLectures.length} Completed
+            </span>
+            <span className="text-[11px] text-slate-400">
+              {completedLecturesCount} of {allLectures.length} completed
             </span>
           </div>
 
-          <div className="overflow-y-auto flex-1 divide-y divide-slate-800/80">
-            {activeCourse.sections.map((section) => (
-              <div key={section._id}>
-                <div className="px-4 py-3 bg-slate-800/50 text-xs font-bold text-slate-300">
-                  {section.title}
-                </div>
-                <div className="divide-y divide-slate-800/40">
-                  {section.lectures.map((lecture) => {
-                    const isSelected = lecture._id === currentLectureId;
-                    const isLecDone = enrollment?.completedLectures.includes(lecture._id);
+          {/* Collapsible Sections List */}
+          <div className="overflow-y-auto flex-1 divide-y divide-slate-800/60">
+            {activeCourse.sections.map((section, sIdx) => {
+              const isExpanded = expandedSectionIds.includes(section._id);
+              const sectionLecs = section.lectures;
+              const sectionQuizzes = section.quizzes || [];
+              const completedInSection = sectionLecs.filter((l) =>
+                enrollment?.completedLectures.includes(l._id)
+              ).length;
 
-                    return (
-                      <button
-                        key={lecture._id}
-                        onClick={() => switchLecture(lecture._id)}
-                        className={`w-full px-4 py-3 text-left text-xs transition-colors flex items-start gap-3 cursor-pointer ${
-                          isSelected
-                            ? "bg-indigo-950/70 text-indigo-200 border-l-2 border-indigo-500"
-                            : "hover:bg-slate-800/40 text-slate-300"
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isLecDone}
-                          onChange={(e) => {
-                            e.stopPropagation();
-                            markLectureComplete(course._id, lecture._id);
-                          }}
-                          className="mt-0.5 rounded-sm bg-slate-800 border-slate-700 text-indigo-600 focus:ring-0 cursor-pointer"
-                        />
-                        <div className="flex-1 min-w-0">
+              return (
+                <div key={section._id} className="bg-transparent">
+                  {/* Collapsible Section Header */}
+                  <button
+                    onClick={() => toggleSection(section._id)}
+                    className="w-full px-4 py-3 text-left flex items-center justify-between hover:bg-slate-800/40 transition-colors cursor-pointer"
+                  >
+                    <div className="min-w-0 pr-2">
+                      <div className="text-xs font-bold text-slate-200 truncate">
+                        Section {sIdx + 1}: {section.title}
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        {completedInSection} / {sectionLecs.length} Lessons
+                        {sectionQuizzes.length > 0 && ` · ${sectionQuizzes.length} Quiz`}
+                      </div>
+                    </div>
+                    <div className="text-slate-400 shrink-0">
+                      {isExpanded ? (
+                        <ChevronUp className="w-4 h-4" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4" />
+                      )}
+                    </div>
+                  </button>
+
+                  {/* Expanded Section Items */}
+                  {isExpanded && (
+                    <div className="bg-slate-950/60 divide-y divide-slate-900/80">
+                      {/* Lessons */}
+                      {sectionLecs.map((lecture) => {
+                        const isCurrent = lecture._id === currentLectureId;
+                        const isLecDone = enrollment?.completedLectures.includes(lecture._id);
+
+                        return (
                           <div
-                            className={`font-medium line-clamp-2 ${
-                              isSelected ? "text-white font-bold" : ""
+                            key={lecture._id}
+                            onClick={() => switchLecture(lecture._id)}
+                            className={`w-full px-4 py-2.5 text-left text-xs transition-colors flex items-start gap-2.5 cursor-pointer ${
+                              isCurrent
+                                ? "bg-indigo-950/60 text-white border-l-2 border-indigo-500"
+                                : "hover:bg-slate-800/40 text-slate-300"
                             }`}
                           >
-                            {lecture.title}
-                          </div>
-                          <div className="text-[10px] text-slate-500 mt-0.5">
-                            {lecture.durationMinutes} mins
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
+                            {/* Visual State Icon */}
+                            <div className="pt-0.5 shrink-0">
+                              {isLecDone ? (
+                                <CheckCircle className="w-4 h-4 text-emerald-400" />
+                              ) : isCurrent ? (
+                                <div className="w-4 h-4 rounded-full bg-indigo-600 text-white flex items-center justify-center">
+                                  <Play className="w-2.5 h-2.5 fill-current ml-0.5" />
+                                </div>
+                              ) : (
+                                <Circle className="w-4 h-4 text-slate-600" />
+                              )}
+                            </div>
 
-                  {/* Section Quizzes */}
-                  {section.quizzes && section.quizzes.length > 0 &&
-                    section.quizzes.map((q) => (
-                      <div
-                        key={q.quizId}
-                        onClick={() => onOpenQuiz(q)}
-                        className="w-full px-4 py-3 text-left text-xs transition-colors flex items-center justify-between hover:bg-purple-950/50 text-purple-200 border-l-2 border-purple-500 bg-purple-950/20 cursor-pointer"
-                      >
-                        <div className="flex items-center gap-2.5 min-w-0 pr-2">
-                          <HelpCircle className="w-4 h-4 text-purple-400 shrink-0" />
-                          <div className="min-w-0">
-                            <div className="font-semibold text-purple-100 truncate">{q.title}</div>
-                            <div className="text-[10px] text-purple-300/80">
-                              Section Quiz • {q.questionsCount || q.questions?.length || 0} Questions
+                            {/* Lesson Title & Progress */}
+                            <div className="flex-1 min-w-0">
+                              <div
+                                className={`text-xs leading-snug line-clamp-2 ${
+                                  isCurrent ? "font-bold text-white" : "font-medium"
+                                }`}
+                              >
+                                {lecture.title}
+                              </div>
+                              <div className="text-[10px] text-slate-400 mt-0.5 font-mono">
+                                {isCurrent
+                                  ? `${formatTime(currentTime)} / ${formatTime(
+                                      duration || lecture.durationMinutes * 60
+                                    )}`
+                                  : `${lecture.durationMinutes} mins`}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                        <span className="px-2 py-0.5 bg-purple-500/20 text-purple-300 text-[10px] font-bold rounded-sm shrink-0">
-                          {q.totalMarks || 0} pts
-                        </span>
-                      </div>
-                    ))}
-                </div>
-              </div>
-            ))}
+                        );
+                      })}
 
-            {/* Exam / Certification Section in Curriculum */}
+                      {/* Quizzes in this Section (Extremely Clear Quiz Visibility) */}
+                      {sectionQuizzes.map((q) => {
+                        const qId = q.quizId || q._id;
+                        const attempt = quizAttempts.find(
+                          (a) => a.quizId === qId || a._id === qId
+                        );
+
+                        return (
+                          <div
+                            key={qId}
+                            onClick={() => onOpenQuiz(q)}
+                            className="w-full px-4 py-2.5 text-left text-xs transition-colors flex items-center justify-between hover:bg-amber-950/30 text-amber-200 border-l-2 border-amber-500 bg-amber-950/15 cursor-pointer"
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                              <HelpCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-semibold text-amber-100 truncate text-xs">
+                                    {q.title}
+                                  </span>
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0">
+                                    QUIZ
+                                  </span>
+                                </div>
+                                <div className="text-[10px] text-amber-300/80 mt-0.5">
+                                  {q.questionsCount || q.questions?.length || 0} Questions ·{" "}
+                                  {q.totalMarks || 10} pts
+                                </div>
+                              </div>
+                            </div>
+
+                            {attempt ? (
+                              <span className="text-[10px] font-bold text-emerald-400 shrink-0">
+                                {attempt.score}%
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 bg-amber-500/20 text-amber-300 text-[10px] font-bold rounded-sm shrink-0">
+                                Start
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* Official Certification Exam in Curriculum */}
             {quiz && (
-              <div className="p-4 bg-indigo-950/40 border-t border-indigo-900/40 space-y-2">
-                <div className="flex items-center gap-2 text-amber-400 font-bold text-xs">
-                  <Award className="w-4 h-4" />
-                  <span>Official Certification Exam</span>
+              <div className="p-4 bg-indigo-950/30 border-t border-indigo-900/40 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-amber-300 font-bold text-xs">
+                    <Award className="w-4 h-4 text-amber-400" />
+                    <span>Final Certification Exam</span>
+                  </div>
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    QUIZ
+                  </span>
                 </div>
                 <p className="text-[11px] text-slate-400 leading-snug">
-                  Timed exam ({quiz.durationMinutes} min) with auto-grading. Requires ≥
-                  {quiz.passingScore}% to earn the verified certificate.
+                  Timed exam ({quiz.durationMinutes} min). Pass with ≥{quiz.passingScore}% to earn your verified certificate.
                 </p>
                 <button
                   onClick={() => onOpenQuiz(quiz)}
-                  className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
                 >
-                  <Sparkles className="w-3.5 h-3.5" /> Open Exam Center
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Launch Exam</span>
                 </button>
               </div>
             )}
           </div>
-        </div>
+        </aside>
+
+        {/* Mobile Curriculum Drawer */}
+        {isMobileCurriculumOpen && (
+          <div className="fixed inset-0 z-50 lg:hidden flex justify-end">
+            <div
+              className="fixed inset-0 bg-black/70 backdrop-blur-xs animate-in fade-in"
+              onClick={() => setIsMobileCurriculumOpen(false)}
+            />
+            <div className="relative w-80 max-w-[85vw] bg-[#0d131f] border-l border-slate-800 h-full flex flex-col z-50 animate-in slide-in-from-right duration-200">
+              <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                    Course Content
+                  </h3>
+                  <div className="text-[10px] text-slate-400 mt-0.5">
+                    {completedLecturesCount} of {allLectures.length} completed
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsMobileCurriculumOpen(false)}
+                  className="p-1 rounded text-slate-400 hover:text-white"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-3 border-b border-slate-800 bg-slate-900">
+                <div className="flex justify-between text-xs font-medium mb-1">
+                  <span className="text-slate-400">Course Progress</span>
+                  <span className="text-indigo-400 font-bold">{enrollment?.progressPercent || 0}%</span>
+                </div>
+                <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                  <div
+                    className="bg-indigo-500 h-full rounded-full"
+                    style={{ width: `${enrollment?.progressPercent || 0}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Mobile Curriculum Scroll Area */}
+              <div className="overflow-y-auto flex-1 divide-y divide-slate-800/60">
+                {activeCourse.sections.map((section, sIdx) => (
+                  <div key={section._id}>
+                    <div className="px-4 py-2.5 bg-slate-900/60 text-xs font-bold text-slate-300">
+                      Section {sIdx + 1}: {section.title}
+                    </div>
+                    <div className="divide-y divide-slate-900/50">
+                      {section.lectures.map((lecture) => {
+                        const isCurrent = lecture._id === currentLectureId;
+                        const isLecDone = enrollment?.completedLectures.includes(lecture._id);
+
+                        return (
+                          <div
+                            key={lecture._id}
+                            onClick={() => switchLecture(lecture._id)}
+                            className={`px-4 py-2.5 text-xs flex items-start gap-2.5 cursor-pointer ${
+                              isCurrent
+                                ? "bg-indigo-950/70 text-white font-bold border-l-2 border-indigo-500"
+                                : "text-slate-300 hover:bg-slate-800/40"
+                            }`}
+                          >
+                            <div className="pt-0.5 shrink-0">
+                              {isLecDone ? (
+                                <CheckCircle className="w-4 h-4 text-emerald-400" />
+                              ) : isCurrent ? (
+                                <Play className="w-3.5 h-3.5 fill-indigo-400 text-indigo-400" />
+                              ) : (
+                                <Circle className="w-4 h-4 text-slate-600" />
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="truncate">{lecture.title}</div>
+                              <div className="text-[10px] text-slate-400">
+                                {lecture.durationMinutes} mins
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {/* Quizzes in Mobile Drawer */}
+                      {section.quizzes &&
+                        section.quizzes.map((q) => (
+                          <div
+                            key={q.quizId || q._id}
+                            onClick={() => {
+                              setIsMobileCurriculumOpen(false);
+                              onOpenQuiz(q);
+                            }}
+                            className="px-4 py-2.5 text-xs flex items-center justify-between bg-amber-950/20 text-amber-200 border-l-2 border-amber-500 cursor-pointer"
+                          >
+                            <div className="flex items-center gap-2 truncate">
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                QUIZ
+                              </span>
+                              <span className="truncate">{q.title}</span>
+                            </div>
+                            <span className="text-[10px] text-amber-300 font-mono">
+                              {q.totalMarks || 10} pts
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

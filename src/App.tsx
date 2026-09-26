@@ -46,6 +46,21 @@ const MainApp: React.FC = () => {
             setQuizCourse(learningCourse);
           }}
           onOpenCertificate={() => setCertCourse(learningCourse)}
+          onNavigateHome={() => {
+            setLearningCourse(null);
+            setCurrentPage("catalog");
+          }}
+          onNavigateMyCourses={() => {
+            setLearningCourse(null);
+            setCurrentPage("my-courses");
+          }}
+          onNavigateCommunity={() => {
+            setLearningCourse(null);
+            setCurrentPage("my-courses");
+          }}
+          onNavigateCertificates={() => {
+            setCertCourse(learningCourse);
+          }}
         />
 
         {/* Exam Modal on top of Video Player */}
