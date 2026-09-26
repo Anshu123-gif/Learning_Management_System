@@ -40,8 +40,12 @@ interface LmsContextType {
   rejectCourse: (courseId: string, reason?: string) => Promise<{ success: boolean; course?: Course; message?: string }>;
   createCourse: (newCourse: Partial<Course>) => Promise<{ success: boolean; course?: Course; message?: string }>;
   addCourse: (newCourse: Partial<Course>) => Promise<{ success: boolean; course?: Course; message?: string }>;
+  updateCourse: (courseId: string, courseData: Partial<Course>) => Promise<{ success: boolean; course?: Course; message?: string }>;
+  deleteCourse: (courseId: string) => Promise<{ success: boolean; message?: string }>;
   addSectionToCourse: (courseId: string, title: string) => Section;
+  deleteSection: (courseId: string, sectionId: string) => Promise<{ success: boolean; message?: string }>;
   addLectureToSection: (courseId: string, sectionId: string, lectureData: Partial<Lecture>) => Lecture;
+  deleteLecture: (courseId: string, sectionId: string, lectureId: string) => Promise<{ success: boolean; message?: string }>;
   saveCourseCurriculum: (courseId: string, sections: Section[]) => Promise<{ success: boolean; course?: Course; message?: string }>;
   
   // Learning & Progress
@@ -592,6 +596,147 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         prev.map((c) => (c._id === courseId ? { ...c, sections } : c))
       );
       return { success: true, message: "Curriculum saved locally." };
+    }
+  };
+
+  const updateCourse = async (
+    courseId: string,
+    courseData: Partial<Course>
+  ): Promise<{ success: boolean; course?: Course; message?: string }> => {
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const res = await fetch(`/api/courses/${courseId}`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify(courseData),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success && data.course) {
+        const updatedCourse: Course = data.course;
+        setCourses((prev) =>
+          prev.map((c) => (c._id === courseId || (c as any).courseId === courseId ? { ...c, ...updatedCourse } : c))
+        );
+        return { success: true, course: updatedCourse, message: data.message };
+      }
+      return { success: false, message: data.message || "Failed to update course." };
+    } catch (err: any) {
+      console.warn("Update course error:", err);
+      return { success: false, message: err.message || "Network error while updating course." };
+    }
+  };
+
+  const deleteCourse = async (
+    courseId: string
+  ): Promise<{ success: boolean; message?: string }> => {
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const res = await fetch(`/api/courses/${courseId}`, {
+        method: "DELETE",
+        headers,
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setCourses((prev) =>
+          prev.filter((c) => c._id !== courseId && (c as any).courseId !== courseId)
+        );
+        return { success: true, message: data.message || "Course deleted successfully." };
+      }
+      return {
+        success: false,
+        message: data.message || "Failed to delete course.",
+      };
+    } catch (err: any) {
+      console.warn("Delete course error:", err);
+      return { success: false, message: err.message || "Network error while deleting course." };
+    }
+  };
+
+  const deleteSection = async (
+    courseId: string,
+    sectionId: string
+  ): Promise<{ success: boolean; message?: string }> => {
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const res = await fetch(`/api/courses/${courseId}/sections/${sectionId}`, {
+        method: "DELETE",
+        headers,
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setCourses((prev) =>
+          prev.map((c) => {
+            if (c._id === courseId || (c as any).courseId === courseId) {
+              const updatedSections = (c.sections || []).filter(
+                (s) => s._id !== sectionId && (s as any).sectionId !== sectionId
+              );
+              return { ...c, sections: updatedSections };
+            }
+            return c;
+          })
+        );
+        return { success: true, message: data.message || "Section deleted successfully." };
+      }
+      return { success: false, message: data.message || "Failed to delete section." };
+    } catch (err: any) {
+      console.warn("Delete section error:", err);
+      return { success: false, message: err.message || "Network error while deleting section." };
+    }
+  };
+
+  const deleteLecture = async (
+    courseId: string,
+    sectionId: string,
+    lectureId: string
+  ): Promise<{ success: boolean; message?: string }> => {
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const res = await fetch(`/api/courses/${courseId}/sections/${sectionId}/lectures/${lectureId}`, {
+        method: "DELETE",
+        headers,
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setCourses((prev) =>
+          prev.map((c) => {
+            if (c._id === courseId || (c as any).courseId === courseId) {
+              const updatedSections = (c.sections || []).map((sec) => {
+                if (sec._id === sectionId || (sec as any).sectionId === sectionId) {
+                  return {
+                    ...sec,
+                    lectures: (sec.lectures || []).filter(
+                      (l) => l._id !== lectureId && (l as any).lectureId !== lectureId
+                    ),
+                  };
+                }
+                return sec;
+              });
+              return { ...c, sections: updatedSections };
+            }
+            return c;
+          })
+        );
+        return { success: true, message: data.message || "Lecture deleted successfully." };
+      }
+      return { success: false, message: data.message || "Failed to delete lecture." };
+    } catch (err: any) {
+      console.warn("Delete lecture error:", err);
+      return { success: false, message: err.message || "Network error while deleting lecture." };
     }
   };
 
@@ -1283,8 +1428,12 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         rejectCourse,
         createCourse,
         addCourse,
+        updateCourse,
+        deleteCourse,
         addSectionToCourse,
+        deleteSection,
         addLectureToSection,
+        deleteLecture,
         saveCourseCurriculum,
         getEnrollmentForCourse,
         isEnrolled,

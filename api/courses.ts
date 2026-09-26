@@ -5,7 +5,13 @@ import { connectMongoDB } from "../server/db.js";
 import { MongoCourse } from "../server/models/Course.js";
 import { MongoQuiz } from "../server/models/Quiz.js";
 import { MongoUser } from "../server/models/User.js";
-import { updateCourseCurriculumInDb } from "../server/curriculumService.js";
+import { MongoEnrollment } from "../server/models/Enrollment.js";
+import { MongoPayment } from "../server/models/Payment.js";
+import {
+  updateCourseCurriculumInDb,
+  deleteSectionFromDb,
+  deleteLectureFromDb,
+} from "../server/curriculumService.js";
 import { uploadCourseThumbnail, deleteCourseThumbnail } from "../server/thumbnailService.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "sheryians_lms_super_secure_jwt_secret_key_2025";
@@ -219,6 +225,200 @@ export async function updateCourseStatusInDb(
   return {
     success: true,
     message: `Course status successfully updated to "${newStatus}".`,
+    course: {
+      ...courseObj,
+      _id: courseObj.courseId || courseObj._id,
+    },
+  };
+}
+
+/**
+ * Shared service helper for safely deleting a course from MongoDB.
+ * Enforces ownership: only instructor owner or admin can delete.
+ * Enforces safety: blocks deletion if students are enrolled.
+ * Cleans up associated quizzes, quiz attempts, and Cloudinary thumbnail.
+ */
+export async function deleteCourseFromDb(
+  courseId: string,
+  authenticatedUserId: string,
+  authenticatedUserRole: string
+) {
+  const connected = await connectMongoDB();
+  if (!connected) {
+    const err: any = new Error("Database service unavailable. MongoDB not connected.");
+    err.statusCode = 503;
+    throw err;
+  }
+
+  if (!courseId) {
+    const err: any = new Error("Course ID is required.");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // Lookup course by courseId or ObjectId
+  let course = await MongoCourse.findOne({ courseId: courseId });
+  if (!course && mongoose.Types.ObjectId.isValid(courseId)) {
+    course = await MongoCourse.findById(courseId);
+  }
+
+  if (!course) {
+    const err: any = new Error(`Course with ID "${courseId}" not found in MongoDB.`);
+    err.statusCode = 404;
+    throw err;
+  }
+
+  // Authorization: Only course instructor owner or admin
+  const isTeacherOwner =
+    authenticatedUserRole === "teacher" && course.instructorId === authenticatedUserId;
+  const isAdmin = authenticatedUserRole === "admin";
+
+  if (!isTeacherOwner && !isAdmin) {
+    const err: any = new Error("Forbidden. You are not authorized to delete this course.");
+    err.statusCode = 403;
+    throw err;
+  }
+
+  const lookupCourseId = course.courseId || courseId;
+
+  // SAFETY CHECKS:
+  // Inspect whether the course has active enrollments or completed payments.
+  // If so, block deletion to prevent orphaned records.
+  const enrollmentCount = await MongoEnrollment.countDocuments({
+    $or: [{ courseId: lookupCourseId }, { courseId: courseId }, { courseId: String(course._id) }],
+  });
+
+  if (enrollmentCount > 0 || (course.studentsEnrolled && course.studentsEnrolled > 0)) {
+    const err: any = new Error(
+      "This course cannot be permanently deleted because students are already enrolled."
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const paymentCount = await MongoPayment.countDocuments({
+    $or: [{ courseId: lookupCourseId }, { courseId: courseId }, { courseId: String(course._id) }],
+    status: "captured",
+  });
+
+  if (paymentCount > 0) {
+    const err: any = new Error(
+      "This course cannot be permanently deleted because students are already enrolled."
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // Clean up associated quizzes from MongoQuiz
+  try {
+    await MongoQuiz.deleteMany({
+      $or: [{ courseId: lookupCourseId }, { courseId: courseId }],
+    });
+  } catch (qErr) {
+    console.warn("Could not delete associated quizzes:", qErr);
+  }
+
+  // Clean up Cloudinary thumbnail if exists
+  if (course.thumbnailPublicId) {
+    try {
+      await deleteCourseThumbnail({
+        publicId: course.thumbnailPublicId,
+        userId: authenticatedUserId,
+        userRole: authenticatedUserRole,
+      });
+    } catch (cldErr) {
+      console.warn("Could not delete course thumbnail from Cloudinary:", cldErr);
+    }
+  }
+
+  // Hard delete the course document from MongoDB
+  await MongoCourse.deleteOne({ _id: course._id });
+
+  console.log(`✅ [Course Deleted] "${course.title}" (${lookupCourseId}) by user ${authenticatedUserId}`);
+
+  return {
+    success: true,
+    message: "Course deleted successfully.",
+  };
+}
+
+/**
+ * Shared service helper for updating course metadata in MongoDB.
+ * Enforces ownership: only instructor owner or admin can edit.
+ */
+export async function updateCourseInDb(
+  courseId: string,
+  input: Partial<CreateCourseInput>,
+  authenticatedUserId: string,
+  authenticatedUserRole: string
+) {
+  const connected = await connectMongoDB();
+  if (!connected) {
+    const err: any = new Error("Database service unavailable. MongoDB not connected.");
+    err.statusCode = 503;
+    throw err;
+  }
+
+  if (!courseId) {
+    const err: any = new Error("Course ID is required.");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  let course = await MongoCourse.findOne({ courseId: courseId });
+  if (!course && mongoose.Types.ObjectId.isValid(courseId)) {
+    course = await MongoCourse.findById(courseId);
+  }
+
+  if (!course) {
+    const err: any = new Error(`Course with ID "${courseId}" not found in MongoDB.`);
+    err.statusCode = 404;
+    throw err;
+  }
+
+  // Authorization: Only course instructor owner or admin
+  const isTeacherOwner =
+    authenticatedUserRole === "teacher" && course.instructorId === authenticatedUserId;
+  const isAdmin = authenticatedUserRole === "admin";
+
+  if (!isTeacherOwner && !isAdmin) {
+    const err: any = new Error("Forbidden. You are not authorized to edit this course.");
+    err.statusCode = 403;
+    throw err;
+  }
+
+  if (input.title !== undefined && input.title.trim()) course.title = input.title.trim();
+  if (input.subtitle !== undefined) course.subtitle = input.subtitle.trim();
+  if (input.description !== undefined) course.description = input.description.trim();
+  if (input.category !== undefined) course.category = input.category;
+  if (input.level !== undefined) course.level = input.level as any;
+  if (input.price !== undefined) {
+    const numPrice = Number(input.price);
+    if (!isNaN(numPrice) && numPrice >= 0) {
+      course.price = numPrice;
+      course.originalPrice = input.originalPrice !== undefined ? Number(input.originalPrice) : numPrice * 2;
+    }
+  }
+  if (input.language !== undefined) course.language = input.language;
+  const newThumb = input.thumbnailUrl || input.thumbnail;
+  if (newThumb && !newThumb.startsWith("data:")) {
+    course.thumbnail = newThumb;
+  }
+  if (input.thumbnailPublicId !== undefined) {
+    course.thumbnailPublicId = input.thumbnailPublicId;
+  }
+  if (Array.isArray(input.requirements)) course.requirements = input.requirements;
+  if (Array.isArray(input.learningOutcomes)) course.learningOutcomes = input.learningOutcomes;
+
+  course.updatedAt = new Date().toISOString();
+  await course.save();
+
+  console.log(`✅ [Course Updated] "${course.title}" (${course.courseId}) by user ${authenticatedUserId}`);
+
+  const courseObj: any = course.toObject();
+  return {
+    success: true,
+    message: "Course updated successfully.",
     course: {
       ...courseObj,
       _id: courseObj.courseId || courseObj._id,
@@ -748,23 +948,123 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         courseId = body?.courseId || body?.id || "";
       }
 
-      const sections = body?.sections || [];
+      const isCurriculumUpdate =
+        req.url?.includes("/curriculum") ||
+        (Array.isArray(req.query?.path) && req.query.path.includes("curriculum")) ||
+        (Array.isArray(body?.sections) && body.sections.length > 0 && !body.title);
 
-      if (!courseId) {
-        return res.status(400).json({
-          success: false,
-          message: "Course ID is required to update curriculum.",
-        });
+      if (isCurriculumUpdate) {
+        const sections = body?.sections || [];
+        const result = await updateCourseCurriculumInDb(courseId, sections, decoded.userId, decoded.role);
+        return res.status(200).json(result);
+      } else {
+        // Update course metadata (title, price, description, etc.)
+        const result = await updateCourseInDb(courseId, body, decoded.userId, decoded.role);
+        return res.status(200).json(result);
       }
-
-      const result = await updateCourseCurriculumInDb(courseId, sections, decoded.userId, decoded.role);
-      return res.status(200).json(result);
     } catch (err: any) {
       console.error("[Vercel /api/courses] PUT Error:", err);
       const statusCode = err.statusCode || 500;
       return res.status(statusCode).json({
         success: false,
-        message: err.message || "Failed to update course curriculum in MongoDB.",
+        message: err.message || "Failed to update course in MongoDB.",
+      });
+    }
+  }
+
+  // 5. DELETE /api/courses: Course, Section, or Lecture deletion
+  if (req.method === "DELETE") {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({
+          success: false,
+          message: "Authentication required. Please provide a valid Bearer token.",
+        });
+      }
+
+      const token = authHeader.split(" ")[1];
+      let decoded: any;
+      try {
+        decoded = jwt.verify(token, JWT_SECRET);
+      } catch {
+        return res.status(401).json({
+          success: false,
+          message: "Invalid or expired session token.",
+        });
+      }
+
+      if (!decoded || !decoded.userId || !decoded.role) {
+        return res.status(401).json({
+          success: false,
+          message: "Invalid session token payload.",
+        });
+      }
+
+      const urlWithoutQuery = (req.url || "").split("?")[0];
+
+      // Check if deleting a lecture: /api/courses/:courseId/sections/:sectionId/lectures/:lectureId
+      const lectureMatch = urlWithoutQuery.match(
+        /\/api\/courses\/([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)/
+      );
+      if (lectureMatch) {
+        const [, cId, sId, lId] = lectureMatch;
+        const result = await deleteLectureFromDb(cId, sId, lId, decoded.userId, decoded.role);
+        return res.status(200).json(result);
+      }
+
+      // Check if deleting a section: /api/courses/:courseId/sections/:sectionId
+      const sectionMatch = urlWithoutQuery.match(
+        /\/api\/courses\/([^/]+)\/sections\/([^/]+)/
+      );
+      if (sectionMatch) {
+        const [, cId, sId] = sectionMatch;
+        const result = await deleteSectionFromDb(cId, sId, decoded.userId, decoded.role);
+        return res.status(200).json(result);
+      }
+
+      // Deleting a course: /api/courses/:courseId
+      let courseId = (req.query?.id as string) || (req.query?.courseId as string) || "";
+      if (!courseId && req.query?.path) {
+        if (Array.isArray(req.query.path)) {
+          courseId = req.query.path[0];
+        } else if (typeof req.query.path === "string") {
+          courseId = req.query.path.split("/")[0];
+        }
+      }
+
+      if (!courseId) {
+        const match = urlWithoutQuery.match(/\/api\/courses\/([^/]+)/);
+        if (match && match[1]) {
+          courseId = match[1];
+        }
+      }
+
+      if (!courseId) {
+        let body = req.body;
+        if (typeof body === "string") {
+          try {
+            body = JSON.parse(body);
+          } catch {}
+        }
+        courseId = body?.courseId || body?.id || "";
+      }
+
+      if (!courseId) {
+        return res.status(400).json({
+          success: false,
+          message: "Course ID is required to delete course.",
+        });
+      }
+
+      const result = await deleteCourseFromDb(courseId, decoded.userId, decoded.role);
+      return res.status(200).json(result);
+    } catch (err: any) {
+      console.error("[Vercel /api/courses] DELETE Error:", err);
+      const statusCode = err.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        message: err.message || "Failed to delete content from MongoDB.",
       });
     }
   }

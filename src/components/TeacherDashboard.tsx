@@ -23,6 +23,13 @@ import {
   Edit3,
   Award,
   CheckSquare,
+  Search,
+  Filter,
+  ArrowUp,
+  ArrowDown,
+  ChevronUp,
+  ChevronDown,
+  Check,
 } from "lucide-react";
 import { Course, Lecture, Section } from "../types";
 import { useLms } from "../context/LmsContext";
@@ -38,8 +45,12 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const {
     courses,
     addCourse,
+    updateCourse,
+    deleteCourse,
     addSectionToCourse,
+    deleteSection,
     addLectureToSection,
+    deleteLecture,
     saveCourseCurriculum,
     discussions,
     addQuizToSection,
@@ -149,6 +160,70 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const [quizError, setQuizError] = useState("");
   const [quizSuccess, setQuizSuccess] = useState("");
   const [isDeletingQuizId, setIsDeletingQuizId] = useState<string | null>(null);
+
+  // Delete Confirmation Modal State
+  interface DeleteTarget {
+    type: "course" | "section" | "lecture" | "quiz";
+    title: string;
+    description: string;
+    id: string;
+    sectionId?: string;
+    courseId?: string;
+    extra?: string;
+  }
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  const [isDeletingItem, setIsDeletingItem] = useState(false);
+  const [deleteModalError, setDeleteModalError] = useState("");
+
+  // Edit Course Modal State
+  const [editingCourse, setEditingCourse] = useState<Course | null>(null);
+  const [editCourseTitle, setEditCourseTitle] = useState("");
+  const [editCourseSubtitle, setEditCourseSubtitle] = useState("");
+  const [editCourseDescription, setEditCourseDescription] = useState("");
+  const [editCourseCategory, setEditCourseCategory] = useState("Web Development");
+  const [editCoursePrice, setEditCoursePrice] = useState("3499");
+  const [editCourseLevel, setEditCourseLevel] = useState<"Beginner" | "Intermediate" | "Advanced">("Beginner");
+  const [editCourseLanguage, setEditCourseLanguage] = useState("English");
+  const [editCourseRequirements, setEditCourseRequirements] = useState("");
+  const [editCourseLearningOutcomes, setEditCourseLearningOutcomes] = useState("");
+  const [editCourseThumbnail, setEditCourseThumbnail] = useState("");
+  const [editThumbnailPreviewUrl, setEditThumbnailPreviewUrl] = useState("");
+  const [editUploadedThumbnailUrl, setEditUploadedThumbnailUrl] = useState("");
+  const [editUploadedThumbnailPublicId, setEditUploadedThumbnailPublicId] = useState("");
+  const [editThumbnailFileName, setEditThumbnailFileName] = useState("");
+  const [isUploadingEditThumbnail, setIsUploadingEditThumbnail] = useState(false);
+  const [editThumbnailUploadProgress, setEditThumbnailUploadProgress] = useState(0);
+  const [editThumbnailUploadStatus, setEditThumbnailUploadStatus] = useState("");
+  const [editThumbnailError, setEditThumbnailError] = useState("");
+  const [isDraggingEditThumbnail, setIsDraggingEditThumbnail] = useState(false);
+  const [isSavingEditCourse, setIsSavingEditCourse] = useState(false);
+  const [editCourseError, setEditCourseError] = useState("");
+  const [editCourseSuccess, setEditCourseSuccess] = useState("");
+
+  // Edit Lecture Modal State
+  const [editingLecture, setEditingLecture] = useState<{ courseId: string; sectionId: string; lecture: Lecture } | null>(null);
+  const [editLectureTitle, setEditLectureTitle] = useState("");
+  const [editLectureDuration, setEditLectureDuration] = useState("15");
+  const [isSavingEditLecture, setIsSavingEditLecture] = useState(false);
+  const [editLectureError, setEditLectureError] = useState("");
+
+  // Inline Section Title Editing State
+  const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
+  const [editingSectionTitle, setEditingSectionTitle] = useState("");
+
+  // Search & Filter
+  const [courseSearchQuery, setCourseSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "approved" | "pending" | "rejected">("all");
+
+  const filteredTeacherCourses = teacherCourses.filter((course) => {
+    const matchesSearch =
+      !courseSearchQuery ||
+      course.title.toLowerCase().includes(courseSearchQuery.toLowerCase()) ||
+      course.category.toLowerCase().includes(courseSearchQuery.toLowerCase());
+    const matchesStatus =
+      statusFilter === "all" || course.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
 
   // Active curriculum course synced with latest LMS courses state
   const activeCurriculumCourse = curriculumCourse
@@ -342,22 +417,277 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     }
   };
 
-  const handleDeleteQuiz = async (quizId: string, courseId: string) => {
-    if (!window.confirm("Are you sure you want to delete this quiz? This will remove it from the course curriculum.")) {
+  const handleExecuteDelete = async () => {
+    if (!deleteTarget) return;
+    setIsDeletingItem(true);
+    setDeleteModalError("");
+
+    try {
+      if (deleteTarget.type === "course") {
+        const res = await deleteCourse(deleteTarget.id);
+        if (!res.success) {
+          setDeleteModalError(res.message || "Failed to delete course.");
+          setIsDeletingItem(false);
+          return;
+        }
+      } else if (deleteTarget.type === "section") {
+        const res = await deleteSection(deleteTarget.courseId!, deleteTarget.id);
+        if (!res.success) {
+          setDeleteModalError(res.message || "Failed to delete section.");
+          setIsDeletingItem(false);
+          return;
+        }
+      } else if (deleteTarget.type === "lecture") {
+        const res = await deleteLecture(deleteTarget.courseId!, deleteTarget.sectionId!, deleteTarget.id);
+        if (!res.success) {
+          setDeleteModalError(res.message || "Failed to delete lecture.");
+          setIsDeletingItem(false);
+          return;
+        }
+      } else if (deleteTarget.type === "quiz") {
+        const res = await deleteQuiz(deleteTarget.id, deleteTarget.courseId!);
+        if (!res.success) {
+          setDeleteModalError(res.message || "Failed to delete quiz.");
+          setIsDeletingItem(false);
+          return;
+        }
+      }
+
+      setDeleteTarget(null);
+      setDeleteModalError("");
+    } catch (err: any) {
+      setDeleteModalError(err.message || "An unexpected error occurred during deletion.");
+    } finally {
+      setIsDeletingItem(false);
+    }
+  };
+
+  const openDeleteCourseModal = (course: Course) => {
+    setDeleteModalError("");
+    setDeleteTarget({
+      type: "course",
+      title: "Delete Course?",
+      description: "Are you sure you want to delete this course? This action cannot be undone.",
+      id: course._id,
+      extra: `${course.title} (₹${course.price.toLocaleString()} • ${course.sections.length} sections)`,
+    });
+  };
+
+  const openDeleteSectionModal = (courseId: string, section: Section) => {
+    setDeleteModalError("");
+    setDeleteTarget({
+      type: "section",
+      title: "Delete Section?",
+      description: `Are you sure you want to delete "${section.title}" and all of its lectures and quizzes? This action cannot be undone.`,
+      id: section._id,
+      courseId: courseId,
+      extra: `Section contains ${section.lectures.length} lectures and ${section.quizzes?.length || 0} quizzes`,
+    });
+  };
+
+  const openDeleteLectureModal = (courseId: string, sectionId: string, lecture: Lecture) => {
+    setDeleteModalError("");
+    setDeleteTarget({
+      type: "lecture",
+      title: "Delete Lecture?",
+      description: `Are you sure you want to delete "${lecture.title}"? This action cannot be undone.`,
+      id: lecture._id,
+      sectionId: sectionId,
+      courseId: courseId,
+      extra: `Duration: ${lecture.durationMinutes}m`,
+    });
+  };
+
+  const openDeleteQuizModal = (courseId: string, quiz: any) => {
+    setDeleteModalError("");
+    setDeleteTarget({
+      type: "quiz",
+      title: "Delete Quiz?",
+      description: `Are you sure you want to delete the quiz "${quiz.title}"? This action cannot be undone.`,
+      id: quiz.quizId || quiz._id,
+      courseId: courseId,
+      extra: `Questions: ${quiz.questionsCount || quiz.questions?.length || 0}`,
+    });
+  };
+
+  const openEditCourseModal = (course: Course) => {
+    setEditingCourse(course);
+    setEditCourseTitle(course.title || "");
+    setEditCourseSubtitle(course.subtitle || "");
+    setEditCourseDescription(course.description || "");
+    setEditCourseCategory(course.category || "Web Development");
+    setEditCoursePrice(String(course.price || 3499));
+    setEditCourseLevel((course.level as any) || "Beginner");
+    setEditCourseLanguage(course.language || "English");
+    setEditCourseRequirements((course.requirements || []).join("\n"));
+    setEditCourseLearningOutcomes((course.learningOutcomes || []).join("\n"));
+    const existingThumb = course.thumbnail || course.thumbnailUrl || "";
+    setEditCourseThumbnail(existingThumb);
+    setEditThumbnailPreviewUrl(existingThumb);
+    setEditUploadedThumbnailUrl(existingThumb);
+    setEditUploadedThumbnailPublicId(course.thumbnailPublicId || "");
+    setEditThumbnailFileName("");
+    setEditThumbnailError("");
+    setEditThumbnailUploadStatus("");
+    setEditThumbnailUploadProgress(0);
+    setIsUploadingEditThumbnail(false);
+    setIsDraggingEditThumbnail(false);
+    setEditCourseError("");
+    setEditCourseSuccess("");
+  };
+
+  const handleSaveEditCourse = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingCourse || !editCourseTitle.trim()) return;
+    if (isUploadingEditThumbnail) return;
+
+    setIsSavingEditCourse(true);
+    setEditCourseError("");
+    setEditCourseSuccess("");
+
+    try {
+      const reqList = editCourseRequirements
+        .split("\n")
+        .map((r) => r.trim())
+        .filter((r) => r.length > 0);
+      const outcomesList = editCourseLearningOutcomes
+        .split("\n")
+        .map((o) => o.trim())
+        .filter((o) => o.length > 0);
+
+      const finalThumbnail = editCourseThumbnail.trim() || editUploadedThumbnailUrl.trim() || editingCourse.thumbnail;
+
+      const res = await updateCourse(editingCourse._id, {
+        title: editCourseTitle.trim(),
+        subtitle: editCourseSubtitle.trim(),
+        description: editCourseDescription.trim(),
+        category: editCourseCategory,
+        level: editCourseLevel,
+        price: parseInt(editCoursePrice) || 3499,
+        language: editCourseLanguage,
+        requirements: reqList.length > 0 ? reqList : editingCourse.requirements,
+        learningOutcomes: outcomesList.length > 0 ? outcomesList : editingCourse.learningOutcomes,
+        thumbnail: finalThumbnail,
+        thumbnailUrl: finalThumbnail,
+        thumbnailPublicId: editUploadedThumbnailPublicId || editingCourse.thumbnailPublicId || "",
+      });
+
+      if (!res.success) {
+        setEditCourseError(res.message || "Failed to update course.");
+      } else {
+        setEditCourseSuccess("Course details updated successfully!");
+        setTimeout(() => {
+          setEditingCourse(null);
+          setEditCourseSuccess("");
+        }, 1200);
+      }
+    } catch (err: any) {
+      setEditCourseError(err.message || "Failed to save course changes.");
+    } finally {
+      setIsSavingEditCourse(false);
+    }
+  };
+
+  const openEditLectureModal = (courseId: string, sectionId: string, lecture: Lecture) => {
+    setEditingLecture({ courseId, sectionId, lecture });
+    setEditLectureTitle(lecture.title);
+    setEditLectureDuration(String(lecture.durationMinutes || 15));
+    setEditLectureError("");
+  };
+
+  const handleSaveEditLecture = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingLecture || !editLectureTitle.trim() || !activeCurriculumCourse) return;
+
+    setIsSavingEditLecture(true);
+    setEditLectureError("");
+
+    try {
+      const updatedSections = activeCurriculumCourse.sections.map((sec) => {
+        if (sec._id === editingLecture.sectionId) {
+          return {
+            ...sec,
+            lectures: sec.lectures.map((l) =>
+              l._id === editingLecture.lecture._id
+                ? {
+                    ...l,
+                    title: editLectureTitle.trim(),
+                    durationMinutes: parseInt(editLectureDuration) || 15,
+                  }
+                : l
+            ),
+          };
+        }
+        return sec;
+      });
+
+      const res = await saveCourseCurriculum(activeCurriculumCourse._id, updatedSections);
+      if (!res.success) {
+        setEditLectureError(res.message || "Failed to update lecture.");
+      } else {
+        setEditingLecture(null);
+      }
+    } catch (err: any) {
+      setEditLectureError(err.message || "Failed to save lecture changes.");
+    } finally {
+      setIsSavingEditLecture(false);
+    }
+  };
+
+  const handleStartEditSection = (section: Section) => {
+    setEditingSectionId(section._id);
+    setEditingSectionTitle(section.title);
+  };
+
+  const handleSaveSectionTitle = async (sectionId: string) => {
+    if (!activeCurriculumCourse || !editingSectionTitle.trim()) {
+      setEditingSectionId(null);
       return;
     }
 
-    setIsDeletingQuizId(quizId);
     try {
-      const res = await deleteQuiz(quizId, courseId);
-      if (!res.success) {
-        alert(res.message || "Failed to delete quiz.");
-      }
-    } catch (err: any) {
-      alert(err.message || "Failed to delete quiz.");
+      const updatedSections = activeCurriculumCourse.sections.map((sec) =>
+        sec._id === sectionId ? { ...sec, title: editingSectionTitle.trim() } : sec
+      );
+      await saveCourseCurriculum(activeCurriculumCourse._id, updatedSections);
+    } catch (err) {
+      console.warn("Error updating section title:", err);
     } finally {
-      setIsDeletingQuizId(null);
+      setEditingSectionId(null);
     }
+  };
+
+  const handleMoveSection = async (sectionIndex: number, direction: "up" | "down") => {
+    if (!activeCurriculumCourse) return;
+    const targetIdx = direction === "up" ? sectionIndex - 1 : sectionIndex + 1;
+    if (targetIdx < 0 || targetIdx >= activeCurriculumCourse.sections.length) return;
+
+    const sectionsCopy = [...activeCurriculumCourse.sections];
+    const temp = sectionsCopy[sectionIndex];
+    sectionsCopy[sectionIndex] = sectionsCopy[targetIdx];
+    sectionsCopy[targetIdx] = temp;
+
+    const reindexed = sectionsCopy.map((s, idx) => ({ ...s, order: idx + 1 }));
+    await saveCourseCurriculum(activeCurriculumCourse._id, reindexed);
+  };
+
+  const handleMoveLecture = async (sectionId: string, lectureIndex: number, direction: "up" | "down") => {
+    if (!activeCurriculumCourse) return;
+    const sec = activeCurriculumCourse.sections.find((s) => s._id === sectionId);
+    if (!sec || !sec.lectures) return;
+
+    const targetIdx = direction === "up" ? lectureIndex - 1 : lectureIndex + 1;
+    if (targetIdx < 0 || targetIdx >= sec.lectures.length) return;
+
+    const lecsCopy = [...sec.lectures];
+    const temp = lecsCopy[lectureIndex];
+    lecsCopy[lectureIndex] = lecsCopy[targetIdx];
+    lecsCopy[targetIdx] = temp;
+
+    const updatedSections = activeCurriculumCourse.sections.map((s) =>
+      s._id === sectionId ? { ...s, lectures: lecsCopy } : s
+    );
+    await saveCourseCurriculum(activeCurriculumCourse._id, updatedSections);
   };
 
   const handleAddNewSectionToCurriculum = async () => {
@@ -539,6 +869,164 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
       handleRemoveThumbnail();
     }
     setShowCreateCourseModal(false);
+  };
+
+  const uploadEditThumbnailFile = async (file: File) => {
+    setEditThumbnailError("");
+
+    // 1. Verify user session & teacher/admin role
+    if (!currentUser || (currentUser.role !== "teacher" && currentUser.role !== "admin")) {
+      setEditThumbnailError("Authentication required. Please sign in as a teacher to upload course thumbnails.");
+      return;
+    }
+
+    // 2. Verify valid JWT token from existing storage ('edupulse_jwt_token')
+    const { token, headers: authHeaders } = getTeacherAuthHeaders();
+    if (!token) {
+      setEditThumbnailError("Authentication required. Please sign in to obtain a valid Bearer token.");
+      return;
+    }
+
+    // 3. Client-side file type and size validation
+    const allowedMimeTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    const fileType = file.type.toLowerCase();
+    const hasValidExtension = /\.(jpe?g|png|webp)$/i.test(file.name);
+
+    if (!allowedMimeTypes.includes(fileType) && !hasValidExtension) {
+      setEditThumbnailError("Unsupported file type. Please upload a JPG, JPEG, PNG, or WEBP image.");
+      return;
+    }
+
+    const MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
+    if (file.size > MAX_SIZE_BYTES) {
+      const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+      setEditThumbnailError(`File size (${sizeMB} MB) exceeds the maximum allowed limit of 5 MB.`);
+      return;
+    }
+
+    // Immediate local preview for responsive UI
+    const previewUrl = URL.createObjectURL(file);
+    setEditThumbnailPreviewUrl(previewUrl);
+    setEditThumbnailFileName(file.name);
+
+    // If a replacement was already uploaded in this session before saving, clean it up
+    if (editUploadedThumbnailPublicId && editUploadedThumbnailPublicId !== editingCourse?.thumbnailPublicId) {
+      try {
+        fetch("/api/courses/delete-thumbnail", {
+          method: "POST",
+          headers: authHeaders,
+          body: JSON.stringify({ publicId: editUploadedThumbnailPublicId }),
+        }).catch(() => {});
+      } catch {}
+    }
+
+    setIsUploadingEditThumbnail(true);
+    setEditThumbnailUploadProgress(25);
+    setEditThumbnailUploadStatus("Reading image file...");
+
+    try {
+      const dataUri: string = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error("Failed to read image file."));
+        reader.readAsDataURL(file);
+      });
+
+      setEditThumbnailUploadProgress(60);
+      setEditThumbnailUploadStatus("Uploading thumbnail to Cloudinary via backend...");
+
+      const res = await fetch("/api/courses/upload-thumbnail", {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({
+          image: dataUri,
+          fileName: file.name,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Failed to upload thumbnail to Cloudinary.");
+      }
+
+      setEditThumbnailUploadProgress(100);
+      setEditThumbnailUploadStatus("Thumbnail uploaded successfully!");
+      setEditUploadedThumbnailUrl(data.secure_url);
+      setEditUploadedThumbnailPublicId(data.public_id);
+      setEditThumbnailPreviewUrl(data.secure_url);
+      setEditCourseThumbnail(data.secure_url);
+    } catch (err: any) {
+      console.error("Thumbnail upload failed:", err);
+      setEditThumbnailError(err.message || "Failed to upload thumbnail. Please try again.");
+    } finally {
+      setIsUploadingEditThumbnail(false);
+    }
+  };
+
+  const handleEditThumbnailFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      uploadEditThumbnailFile(e.target.files[0]);
+    }
+  };
+
+  const handleEditThumbnailDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingEditThumbnail(true);
+  };
+
+  const handleEditThumbnailDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingEditThumbnail(false);
+  };
+
+  const handleEditThumbnailDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingEditThumbnail(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      uploadEditThumbnailFile(e.dataTransfer.files[0]);
+    }
+  };
+
+  const handleRemoveEditThumbnail = async () => {
+    if (editUploadedThumbnailPublicId && editUploadedThumbnailPublicId !== editingCourse?.thumbnailPublicId) {
+      try {
+        const { token, headers: authHeaders } = getTeacherAuthHeaders();
+        if (token) {
+          await fetch("/api/courses/delete-thumbnail", {
+            method: "POST",
+            headers: authHeaders,
+            body: JSON.stringify({ publicId: editUploadedThumbnailPublicId }),
+          });
+        }
+      } catch (err) {
+        console.warn("Could not delete thumbnail from Cloudinary:", err);
+      }
+    }
+    setEditUploadedThumbnailUrl("");
+    setEditUploadedThumbnailPublicId("");
+    setEditThumbnailPreviewUrl("");
+    setEditCourseThumbnail("");
+    setEditThumbnailFileName("");
+    setEditThumbnailError("");
+    setEditThumbnailUploadStatus("");
+  };
+
+  const handleCloseEditCourseModal = () => {
+    if (isUploadingEditThumbnail || isSavingEditCourse) return;
+    if (editUploadedThumbnailPublicId && editUploadedThumbnailPublicId !== editingCourse?.thumbnailPublicId) {
+      try {
+        const { token, headers: authHeaders } = getTeacherAuthHeaders();
+        if (token) {
+          fetch("/api/courses/delete-thumbnail", {
+            method: "POST",
+            headers: authHeaders,
+            body: JSON.stringify({ publicId: editUploadedThumbnailPublicId }),
+          }).catch(() => {});
+        }
+      } catch {}
+    }
+    setEditingCourse(null);
   };
 
   const handleCreateCourse = async (e: React.FormEvent) => {
@@ -916,6 +1404,36 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
           </button>
         </div>
 
+        {/* Search & Status Filter Toolbar */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
+          <div className="relative flex-1 max-w-sm">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+            <input
+              type="text"
+              value={courseSearchQuery}
+              onChange={(e) => setCourseSearchQuery(e.target.value)}
+              placeholder="Search courses by title or category..."
+              className="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+
+          <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl text-xs font-semibold overflow-x-auto">
+            {(["all", "approved", "pending", "rejected"] as const).map((st) => (
+              <button
+                key={st}
+                onClick={() => setStatusFilter(st)}
+                className={`px-3 py-1 rounded-lg capitalize transition-colors cursor-pointer ${
+                  statusFilter === st
+                    ? "bg-white text-slate-900 shadow-2xs font-bold"
+                    : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                {st === "all" ? `All (${teacherCourses.length})` : st}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 text-slate-500 font-semibold border-y border-slate-200">
@@ -929,97 +1447,132 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {teacherCourses.map((course) => {
-                const totalLecs = course.sections.flatMap((s) => s.lectures).length;
-                return (
-                  <tr key={course._id} className="hover:bg-slate-50/70 transition-colors">
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-3">
-                        <img
-                          src={course.thumbnail}
-                          alt={course.title}
-                          className="w-12 h-8 rounded-md object-cover"
-                        />
-                        <div>
-                          <div className="font-bold text-slate-900 line-clamp-1">
-                            {course.title}
-                          </div>
-                          <div className="text-[11px] text-slate-400">
-                            {course.category} • {course.level}
+              {filteredTeacherCourses.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-slate-400">
+                    No courses match your filter or search query.
+                  </td>
+                </tr>
+              ) : (
+                filteredTeacherCourses.map((course) => {
+                  const totalLecs = course.sections.flatMap((s) => s.lectures).length;
+                  return (
+                    <tr key={course._id} className="hover:bg-slate-50/70 transition-colors">
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={course.thumbnail}
+                            alt={course.title}
+                            className="w-12 h-8 rounded-md object-cover"
+                          />
+                          <div>
+                            <div className="font-bold text-slate-900 line-clamp-1">
+                              {course.title}
+                            </div>
+                            <div className="text-[11px] text-slate-400">
+                              {course.category} • {course.level}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    </td>
+                      </td>
 
-                    <td className="py-3 px-4">
-                      <span
-                        className={`px-2 py-0.5 rounded-md font-bold uppercase text-[10px] ${
-                          course.status === "approved"
-                            ? "bg-emerald-100 text-emerald-800"
-                            : course.status === "pending"
-                            ? "bg-amber-100 text-amber-800"
-                            : "bg-rose-100 text-rose-800"
-                        }`}
-                      >
-                        {course.status}
-                      </span>
-                    </td>
-
-                    <td className="py-3 px-4 font-semibold text-slate-700">
-                      {course.studentsEnrolled.toLocaleString()}
-                    </td>
-
-                    <td className="py-3 px-4 font-bold text-slate-900">
-                      ₹{course.price.toLocaleString()}
-                    </td>
-
-                    <td className="py-3 px-4 text-slate-600">
-                      {totalLecs} lectures{course.sections.some((s) => s.quizzes && s.quizzes.length > 0) ? ` • ${course.sections.flatMap((s) => s.quizzes || []).length} quizzes` : ""} ({course.sections.length} sections)
-                    </td>
-
-                    <td className="py-3 px-4 text-right">
-                      <div className="flex items-center justify-end gap-2 flex-wrap">
-                        <button
-                          onClick={() => setCurriculumCourse(course)}
-                          className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-xs flex items-center gap-1 transition-colors cursor-pointer shadow-xs"
-                          title="Manage Curriculum & Quizzes"
+                      <td className="py-3 px-4">
+                        <span
+                          className={`px-2 py-0.5 rounded-md font-bold uppercase text-[10px] ${
+                            course.status === "approved"
+                              ? "bg-emerald-100 text-emerald-800"
+                              : course.status === "pending"
+                              ? "bg-amber-100 text-amber-800"
+                              : "bg-rose-100 text-rose-800"
+                          }`}
                         >
-                          <Layers className="w-3.5 h-3.5" />
-                          <span>Manage Curriculum</span>
-                        </button>
+                          {course.status}
+                        </span>
+                      </td>
 
-                        <button
-                          onClick={() => openCreateQuizModal(course)}
-                          className="px-2.5 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 font-semibold rounded-lg text-xs flex items-center gap-1 transition-colors cursor-pointer"
-                          title="Create Section Quiz"
-                        >
-                          <HelpCircle className="w-3.5 h-3.5" />
-                          <span>Add Quiz</span>
-                        </button>
+                      <td className="py-3 px-4 font-semibold text-slate-700">
+                        {course.studentsEnrolled.toLocaleString()}
+                      </td>
 
-                        <button
-                          onClick={() => {
-                            setSelectedCourseForLecture(course);
-                            setShowAddLectureModal(true);
-                          }}
-                          className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg text-xs flex items-center gap-1 transition-colors cursor-pointer"
-                          title="Upload video to Cloudinary"
-                        >
-                          <Upload className="w-3.5 h-3.5" />
-                          <span>Add Lecture</span>
-                        </button>
+                      <td className="py-3 px-4 font-bold text-slate-900">
+                        ₹{course.price.toLocaleString()}
+                      </td>
 
-                        <button
-                          onClick={() => onSelectCourse(course)}
-                          className="px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 font-semibold rounded-lg text-xs transition-colors"
-                        >
-                          View Syllabus
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+                      <td className="py-3 px-4 text-slate-600">
+                        {totalLecs} lectures{course.sections.some((s) => s.quizzes && s.quizzes.length > 0) ? ` • ${course.sections.flatMap((s) => s.quizzes || []).length} quizzes` : ""} ({course.sections.length} sections)
+                      </td>
+
+                      <td className="py-3 px-4 text-right">
+                        <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                          <button
+                            onClick={() => setCurriculumCourse(course)}
+                            className="px-2 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-xs flex items-center gap-1 transition-colors cursor-pointer shadow-xs"
+                            title="Manage Curriculum & Quizzes"
+                          >
+                            <Layers className="w-3.5 h-3.5" />
+                            <span>Curriculum</span>
+                          </button>
+
+                          <button
+                            onClick={() => openEditCourseModal(course)}
+                            className="px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg text-xs flex items-center gap-1 transition-colors cursor-pointer"
+                            title="Edit Course Details"
+                          >
+                            <Edit3 className="w-3.5 h-3.5 text-slate-500" />
+                            <span>Edit</span>
+                          </button>
+
+                          <button
+                            onClick={() => openCreateQuizModal(course)}
+                            className="px-2 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 font-semibold rounded-lg text-xs flex items-center gap-1 transition-colors cursor-pointer"
+                            title="Create Section Quiz"
+                          >
+                            <HelpCircle className="w-3.5 h-3.5" />
+                            <span>Add Quiz</span>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setSelectedCourseForLecture(course);
+                              setShowAddLectureModal(true);
+                            }}
+                            className="px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg text-xs flex items-center gap-1 transition-colors cursor-pointer"
+                            title="Upload video to Cloudinary"
+                          >
+                            <Upload className="w-3.5 h-3.5" />
+                            <span>Add Lecture</span>
+                          </button>
+
+                          <button
+                            onClick={() => openEditCourseModal(course)}
+                            className="px-2 py-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 text-indigo-700 font-semibold rounded-lg text-xs flex items-center gap-1 transition-colors cursor-pointer"
+                            title="Edit Course Details"
+                          >
+                            <Edit3 className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>Edit</span>
+                          </button>
+
+                          <button
+                            onClick={() => onSelectCourse(course)}
+                            className="px-2 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 font-semibold rounded-lg text-xs transition-colors"
+                          >
+                            Syllabus
+                          </button>
+
+                          <button
+                            onClick={() => openDeleteCourseModal(course)}
+                            className="px-2 py-1.5 bg-rose-50 hover:bg-rose-100 border border-rose-200/80 text-rose-700 font-semibold rounded-lg text-xs flex items-center gap-1 transition-colors cursor-pointer"
+                            title="Delete Course"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                            <span>Delete</span>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
@@ -1606,20 +2159,81 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                     >
                       {/* Section Title Header */}
                       <div className="px-4 py-3 bg-slate-50/90 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                        <div className="flex items-center gap-2.5">
-                          <span className="w-6 h-6 rounded-md bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center justify-center">
+                        <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                          <span className="w-6 h-6 rounded-md bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center justify-center shrink-0">
                             {sIndex + 1}
                           </span>
-                          <span className="text-xs font-bold text-slate-900">
-                            {section.title}
-                          </span>
-                          <span className="text-[10px] text-slate-400 font-mono">
-                            ({section.lectures.length} lecs, {sectionQuizzes.length} quizzes)
-                          </span>
+
+                          {editingSectionId === section._id ? (
+                            <div className="flex items-center gap-1.5 flex-1 max-w-sm">
+                              <input
+                                type="text"
+                                value={editingSectionTitle}
+                                onChange={(e) => setEditingSectionTitle(e.target.value)}
+                                className="w-full bg-white border border-indigo-300 rounded-md px-2 py-1 text-xs text-slate-900 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                                autoFocus
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleSaveSectionTitle(section._id)}
+                                className="p-1 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 cursor-pointer"
+                                title="Save Section Title"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingSectionId(null)}
+                                className="p-1 bg-slate-200 text-slate-700 rounded-md hover:bg-slate-300 cursor-pointer"
+                                title="Cancel"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="text-xs font-bold text-slate-900 truncate">
+                                {section.title}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleStartEditSection(section)}
+                                className="p-1 text-slate-400 hover:text-indigo-600 rounded-md transition-colors cursor-pointer"
+                                title="Rename Section"
+                              >
+                                <Edit3 className="w-3 h-3" />
+                              </button>
+                              <span className="text-[10px] text-slate-400 font-mono shrink-0">
+                                ({section.lectures.length} lecs, {sectionQuizzes.length} quizzes)
+                              </span>
+                            </div>
+                          )}
                         </div>
 
-                        {/* Section Actions: Add Lecture & Add Quiz */}
-                        <div className="flex items-center gap-2 self-end sm:self-center">
+                        {/* Section Actions: Reorder, Add Lecture, Add Quiz, Delete Section */}
+                        <div className="flex items-center gap-1.5 self-end sm:self-center shrink-0">
+                          {/* Reorder Buttons */}
+                          <div className="flex items-center border border-slate-200 rounded-lg bg-white overflow-hidden">
+                            <button
+                              type="button"
+                              disabled={sIndex === 0}
+                              onClick={() => handleMoveSection(sIndex, "up")}
+                              className="p-1 text-slate-500 hover:text-slate-900 disabled:opacity-30 disabled:hover:text-slate-500 hover:bg-slate-100 transition-colors cursor-pointer"
+                              title="Move Section Up"
+                            >
+                              <ChevronUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={sIndex === activeCurriculumCourse.sections.length - 1}
+                              onClick={() => handleMoveSection(sIndex, "down")}
+                              className="p-1 text-slate-500 hover:text-slate-900 disabled:opacity-30 disabled:hover:text-slate-500 hover:bg-slate-100 transition-colors cursor-pointer border-l border-slate-200"
+                              title="Move Section Down"
+                            >
+                              <ChevronDown className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+
                           <button
                             type="button"
                             onClick={() => {
@@ -1640,6 +2254,15 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                           >
                             <HelpCircle className="w-3 h-3 text-purple-600" />
                             <span>+ Quiz</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => openDeleteSectionModal(activeCurriculumCourse._id, section)}
+                            className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 border border-rose-200 rounded-lg transition-colors cursor-pointer"
+                            title="Delete Section"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </div>
@@ -1676,6 +2299,22 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                                       Standard
                                     </span>
                                   )}
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditLectureModal(activeCurriculumCourse._id, section._id, lec)}
+                                    className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-white rounded transition-colors cursor-pointer"
+                                    title="Edit Lecture"
+                                  >
+                                    <Edit3 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => openDeleteLectureModal(activeCurriculumCourse._id, section._id, lec)}
+                                    className="p-1 text-slate-400 hover:text-rose-600 hover:bg-white rounded transition-colors cursor-pointer"
+                                    title="Delete Lecture"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
                                 </div>
                               </div>
                             ))}
@@ -1722,7 +2361,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                                   <button
                                     type="button"
                                     disabled={isDeletingQuizId === quiz.quizId}
-                                    onClick={() => handleDeleteQuiz(quiz.quizId, activeCurriculumCourse._id)}
+                                    onClick={() => openDeleteQuizModal(activeCurriculumCourse._id, quiz)}
                                     className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-white rounded-md transition-colors cursor-pointer disabled:opacity-50"
                                     title="Delete Quiz"
                                   >
@@ -2046,6 +2685,440 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                     <span>
                       {quizModalMode === "create" ? "Save Quiz to Curriculum" : "Update Quiz in Curriculum"}
                     </span>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Delete Confirmation Modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-rose-50 flex items-center justify-center shrink-0 border border-rose-100 text-rose-600">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">{deleteTarget.title}</h3>
+                {deleteTarget.extra && (
+                  <p className="text-xs text-slate-500 font-medium truncate max-w-xs">{deleteTarget.extra}</p>
+                )}
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-600 leading-relaxed">
+              {deleteTarget.description}
+            </p>
+
+            {deleteModalError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{deleteModalError}</span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={isDeletingItem}
+                onClick={() => {
+                  setDeleteTarget(null);
+                  setDeleteModalError("");
+                }}
+                className="px-4 py-2 border border-slate-200 rounded-xl text-slate-700 hover:bg-slate-50 font-semibold text-xs transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                disabled={isDeletingItem}
+                onClick={handleExecuteDelete}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 disabled:bg-rose-400 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+              >
+                {isDeletingItem ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <span>
+                    {deleteTarget.type === "course"
+                      ? "Delete Course"
+                      : deleteTarget.type === "section"
+                      ? "Delete Section"
+                      : deleteTarget.type === "lecture"
+                      ? "Delete Lecture"
+                      : "Delete Quiz"}
+                  </span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edit Course Metadata */}
+      {editingCourse && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-xl w-full p-6 space-y-4 my-8 max-h-[90vh] overflow-y-auto relative animate-in fade-in zoom-in-95">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600">
+                  <Edit3 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Edit Course Details</h3>
+                  <p className="text-xs text-slate-500">Update course metadata, pricing, and curriculum overview</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={isSavingEditCourse || isUploadingEditThumbnail}
+                onClick={handleCloseEditCourseModal}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer disabled:opacity-50"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {editCourseError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{editCourseError}</span>
+              </div>
+            )}
+
+            {editCourseSuccess && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 shrink-0 text-emerald-600" />
+                <span>{editCourseSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveEditCourse} className="space-y-4 text-xs">
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">Course Title *</label>
+                <input
+                  type="text"
+                  required
+                  value={editCourseTitle}
+                  onChange={(e) => setEditCourseTitle(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">Subtitle</label>
+                <input
+                  type="text"
+                  value={editCourseSubtitle}
+                  onChange={(e) => setEditCourseSubtitle(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">Category</label>
+                  <select
+                    value={editCourseCategory}
+                    onChange={(e) => setEditCourseCategory(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 cursor-pointer"
+                  >
+                    <option value="Web Development">Web Development</option>
+                    <option value="Frontend">Frontend</option>
+                    <option value="Backend">Backend</option>
+                    <option value="Full Stack">Full Stack</option>
+                    <option value="DevOps & Cloud">DevOps & Cloud</option>
+                    <option value="Programming Languages">Programming Languages</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">Level</label>
+                  <select
+                    value={editCourseLevel}
+                    onChange={(e) => setEditCourseLevel(e.target.value as any)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 cursor-pointer"
+                  >
+                    <option value="Beginner">Beginner</option>
+                    <option value="Intermediate">Intermediate</option>
+                    <option value="Advanced">Advanced</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">Tuition (₹ INR)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={editCoursePrice}
+                    onChange={(e) => setEditCoursePrice(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">Description</label>
+                <textarea
+                  rows={3}
+                  value={editCourseDescription}
+                  onChange={(e) => setEditCourseDescription(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 resize-none"
+                />
+              </div>
+
+              {/* Course Thumbnail Upload Section (Direct to Cloudinary via Backend) */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-slate-700 block text-xs">
+                    Course Thumbnail <span className="text-slate-400 font-normal">(16:9 recommended, JPG, PNG, WEBP, max 5 MB)</span>
+                  </label>
+                  {(editUploadedThumbnailUrl || editCourseThumbnail) && (
+                    <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1">
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      Cloudinary Thumbnail
+                    </span>
+                  )}
+                </div>
+
+                {/* If thumbnail preview or uploaded image is present */}
+                {editThumbnailPreviewUrl || editCourseThumbnail || editUploadedThumbnailUrl ? (
+                  <div className="relative group rounded-xl overflow-hidden border border-slate-200 bg-slate-900 aspect-video max-h-52 w-full flex items-center justify-center shadow-xs">
+                    <img
+                      src={editThumbnailPreviewUrl || editUploadedThumbnailUrl || editCourseThumbnail}
+                      alt="Course Thumbnail Preview"
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute inset-0 bg-slate-950/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 p-4">
+                      <label className="px-3 py-1.5 bg-white/90 hover:bg-white text-slate-800 text-xs font-semibold rounded-lg shadow-md cursor-pointer flex items-center gap-1.5 transition-colors">
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Change Image</span>
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/jpg"
+                          className="hidden"
+                          disabled={isUploadingEditThumbnail}
+                          onChange={handleEditThumbnailFileChange}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        disabled={isUploadingEditThumbnail}
+                        onClick={handleRemoveEditThumbnail}
+                        className="px-3 py-1.5 bg-rose-600/90 hover:bg-rose-600 text-white text-xs font-semibold rounded-lg shadow-md cursor-pointer flex items-center gap-1.5 transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Remove</span>
+                      </button>
+                    </div>
+
+                    {/* Active Uploading Overlay */}
+                    {isUploadingEditThumbnail && (
+                      <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-xs flex flex-col items-center justify-center gap-2 text-white p-4">
+                        <div className="w-6 h-6 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                        <span className="text-xs font-medium">{editThumbnailUploadStatus || "Uploading to Cloudinary..."}</span>
+                        {editThumbnailUploadProgress > 0 && (
+                          <div className="w-48 bg-slate-700 rounded-full h-1.5 overflow-hidden mt-1">
+                            <div
+                              className="bg-indigo-500 h-full transition-all duration-300"
+                              style={{ width: `${editThumbnailUploadProgress}%` }}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  /* Dropzone & Upload Button */
+                  <div
+                    onDragOver={handleEditThumbnailDragOver}
+                    onDragLeave={handleEditThumbnailDragLeave}
+                    onDrop={handleEditThumbnailDrop}
+                    className={`border-2 border-dashed rounded-xl p-5 text-center transition-all ${
+                      isDraggingEditThumbnail
+                        ? "border-indigo-500 bg-indigo-50/60"
+                        : "border-slate-200 hover:border-indigo-300 bg-slate-50/50 hover:bg-indigo-50/20"
+                    }`}
+                  >
+                    <div className="flex flex-col items-center justify-center space-y-2">
+                      <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center">
+                        <ImageIcon className="w-5 h-5" />
+                      </div>
+                      <div className="space-y-0.5">
+                        <p className="text-xs font-semibold text-slate-800">
+                          Drag & drop course thumbnail here, or click to browse
+                        </p>
+                        <p className="text-[11px] text-slate-500">
+                          Supports JPG, PNG, WEBP • Max 5 MB
+                        </p>
+                      </div>
+                      <label className="mt-2 inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg shadow-xs cursor-pointer transition-colors">
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Upload Thumbnail</span>
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/jpg"
+                          className="hidden"
+                          disabled={isUploadingEditThumbnail}
+                          onChange={handleEditThumbnailFileChange}
+                        />
+                      </label>
+                    </div>
+
+                    {isUploadingEditThumbnail && (
+                      <div className="mt-3 p-2.5 bg-indigo-50 border border-indigo-100 rounded-lg flex items-center justify-center gap-2 text-indigo-700 text-xs">
+                        <div className="w-3.5 h-3.5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                        <span>{editThumbnailUploadStatus || "Uploading to Cloudinary..."}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Validation / Upload Error Message */}
+                {editThumbnailError && (
+                  <div className="text-xs text-rose-600 bg-rose-50 border border-rose-100 rounded-lg p-2.5 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                    <span>{editThumbnailError}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">Requirements (one per line)</label>
+                  <textarea
+                    rows={2}
+                    value={editCourseRequirements}
+                    onChange={(e) => setEditCourseRequirements(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 resize-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">Learning Outcomes (one per line)</label>
+                  <textarea
+                    rows={2}
+                    value={editCourseLearningOutcomes}
+                    onChange={(e) => setEditCourseLearningOutcomes(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 resize-none"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  disabled={isSavingEditCourse || isUploadingEditThumbnail}
+                  onClick={handleCloseEditCourseModal}
+                  className="px-4 py-2 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingEditCourse || isUploadingEditThumbnail}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-xs disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isSavingEditCourse ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Saving Changes...</span>
+                    </>
+                  ) : isUploadingEditThumbnail ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Uploading Thumbnail...</span>
+                    </>
+                  ) : (
+                    <span>Save Course Changes</span>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edit Lecture */}
+      {editingLecture && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600">
+                  <Video className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Edit Lecture</h3>
+                  <p className="text-xs text-slate-500">Update lecture title and duration</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingLecture(null)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {editLectureError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{editLectureError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveEditLecture} className="space-y-3 text-xs">
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">Lecture Title *</label>
+                <input
+                  type="text"
+                  required
+                  value={editLectureTitle}
+                  onChange={(e) => setEditLectureTitle(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">Duration (Minutes)</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={editLectureDuration}
+                  onChange={(e) => setEditLectureDuration(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  disabled={isSavingEditLecture}
+                  onClick={() => setEditingLecture(null)}
+                  className="px-4 py-2 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingEditLecture}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-xs disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isSavingEditLecture ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <span>Update Lecture</span>
                   )}
                 </button>
               </div>

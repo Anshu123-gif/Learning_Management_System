@@ -38,6 +38,8 @@ import {
   Home,
   Clock,
   Compass,
+  Sun,
+  Moon,
 } from "lucide-react";
 import { Course, SectionQuiz } from "../types";
 import { useLms } from "../context/LmsContext";
@@ -180,6 +182,50 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
   const [resumeNotification, setResumeNotification] = useState<string | null>(null);
   const [shortcutFeedback, setShortcutFeedback] = useState<string | null>(null);
   const [showUpNextPrompt, setShowUpNextPrompt] = useState(false);
+
+  // Student Learning Interface Theme State (Light ↔ Dark)
+  // Persisted in localStorage and respects prefers-color-scheme when no saved preference exists
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    try {
+      const saved = localStorage.getItem("edupulse_theme");
+      if (saved === "light" || saved === "dark") return saved;
+      if (
+        typeof window !== "undefined" &&
+        window.matchMedia &&
+        window.matchMedia("(prefers-color-scheme: light)").matches
+      ) {
+        return "light";
+      }
+    } catch {}
+    return "dark";
+  });
+
+  useEffect(() => {
+    try {
+      if (typeof window === "undefined" || !window.matchMedia) return;
+      const mediaQuery = window.matchMedia("(prefers-color-scheme: light)");
+      const handleSystemThemeChange = (e: MediaQueryListEvent) => {
+        const saved = localStorage.getItem("edupulse_theme");
+        if (!saved) {
+          setTheme(e.matches ? "light" : "dark");
+        }
+      };
+      mediaQuery.addEventListener("change", handleSystemThemeChange);
+      return () => mediaQuery.removeEventListener("change", handleSystemThemeChange);
+    } catch {}
+  }, []);
+
+  const toggleTheme = () => {
+    setTheme((prev) => {
+      const next = prev === "dark" ? "light" : "dark";
+      try {
+        localStorage.setItem("edupulse_theme", next);
+      } catch {}
+      return next;
+    });
+  };
+
+  const isLight = theme === "light";
 
   // Simple Tabs below video
   type TabType = "notes" | "code" | "explanation" | "discussion" | "resources" | "practice";
@@ -819,22 +865,40 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
   const currentSectionQuiz = currentSection?.quizzes?.[0];
 
   return (
-    <div className="h-screen w-full bg-[#090d16] text-slate-100 flex flex-col font-sans select-none overflow-hidden">
+    <div
+      className={`h-screen w-full flex flex-col font-sans select-none overflow-hidden transition-colors ${
+        isLight ? "bg-slate-50 text-slate-900" : "bg-[#090d16] text-slate-100"
+      }`}
+    >
       {/* ==================================================== */}
       {/* MOBILE TOP BAR (Appears on screens < lg) */}
       {/* ==================================================== */}
-      <div className="lg:hidden h-14 bg-[#0d131f] border-b border-slate-800 px-4 flex items-center justify-between shrink-0 z-30">
+      <div
+        className={`lg:hidden h-14 border-b px-4 flex items-center justify-between shrink-0 z-30 transition-colors ${
+          isLight
+            ? "bg-white border-slate-200 text-slate-900"
+            : "bg-[#0d131f] border-slate-800 text-white"
+        }`}
+      >
         <div className="flex items-center gap-2">
           <button
             onClick={() => setIsMobileNavOpen(true)}
-            className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 transition-colors cursor-pointer"
+            className={`p-2 rounded-lg transition-colors cursor-pointer ${
+              isLight
+                ? "bg-slate-100 text-slate-700 hover:text-slate-900 hover:bg-slate-200"
+                : "bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700"
+            }`}
             aria-label="Open Navigation"
           >
             <Menu className="w-4 h-4" />
           </button>
           <button
             onClick={onBack}
-            className="flex items-center gap-1 text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
+            className={`flex items-center gap-1 text-xs transition-colors cursor-pointer ${
+              isLight
+                ? "text-slate-600 hover:text-slate-900"
+                : "text-slate-400 hover:text-white"
+            }`}
           >
             <ChevronLeft className="w-4 h-4" />
             <span className="truncate max-w-[120px]">{course.title}</span>
@@ -842,6 +906,23 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Mobile Sun / Moon Theme Toggle */}
+          <button
+            onClick={toggleTheme}
+            aria-label={isLight ? "Switch to dark mode" : "Switch to light mode"}
+            title={isLight ? "Switch to dark mode" : "Switch to light mode"}
+            className={`p-2 rounded-lg text-xs font-semibold flex items-center justify-center transition-colors cursor-pointer border ${
+              isLight
+                ? "bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200"
+                : "bg-slate-800 text-slate-300 border-slate-700 hover:text-white"
+            }`}
+          >
+            {isLight ? (
+              <Moon className="w-4 h-4 text-slate-700" />
+            ) : (
+              <Sun className="w-4 h-4 text-amber-400" />
+            )}
+          </button>
           <button
             onClick={() => setIsMobileCurriculumOpen(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600/90 hover:bg-indigo-600 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors cursor-pointer"
@@ -860,36 +941,84 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
         {/* PART 1: LEFT SIDEBAR (Course Navigation) */}
         {/* ==================================================== */}
         {/* Desktop Left Sidebar */}
-        <aside className="w-64 shrink-0 bg-[#0d131f] border-r border-slate-800 flex flex-col hidden lg:flex select-none">
+        <aside
+          className={`w-64 shrink-0 border-r flex flex-col hidden lg:flex select-none transition-colors ${
+            isLight
+              ? "bg-white border-slate-200 text-slate-800"
+              : "bg-[#0d131f] border-slate-800 text-slate-100"
+          }`}
+        >
           {/* Top Brand / Navigation Group */}
-          <div className="p-3 border-b border-slate-800/80 space-y-1">
+          <div
+            className={`p-3 border-b space-y-1 ${
+              isLight ? "border-slate-200" : "border-slate-800/80"
+            }`}
+          >
             <button
               onClick={onNavigateHome || onBack}
-              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/70 transition-colors cursor-pointer"
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                isLight
+                  ? "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                  : "text-slate-300 hover:text-white hover:bg-slate-800/70"
+              }`}
             >
               <Home className="w-4 h-4 text-slate-400" />
               <span>Home</span>
             </button>
             <button
               onClick={onNavigateMyCourses || onBack}
-              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/70 transition-colors cursor-pointer"
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                isLight
+                  ? "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                  : "text-slate-300 hover:text-white hover:bg-slate-800/70"
+              }`}
             >
               <BookOpen className="w-4 h-4 text-slate-400" />
               <span>My Courses</span>
             </button>
             <button
               onClick={onNavigateCommunity || (() => setActiveTab("discussion"))}
-              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/70 transition-colors cursor-pointer"
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                isLight
+                  ? "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                  : "text-slate-300 hover:text-white hover:bg-slate-800/70"
+              }`}
             >
               <MessageSquare className="w-4 h-4 text-slate-400" />
               <span>Community</span>
             </button>
             <button
               onClick={onNavigateCertificates || onOpenCertificate}
-              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/70 transition-colors cursor-pointer"
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                isLight
+                  ? "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                  : "text-slate-300 hover:text-white hover:bg-slate-800/70"
+              }`}
             >
               <Award className="w-4 h-4 text-amber-400" />
               <span>Certificates</span>
+            </button>
+
+            {/* Sun / Moon Theme Toggle in Desktop Left Nav */}
+            <button
+              onClick={toggleTheme}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                isLight
+                  ? "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                  : "text-slate-300 hover:text-white hover:bg-slate-800/70"
+              }`}
+            >
+              {isLight ? (
+                <>
+                  <Moon className="w-4 h-4 text-slate-600" />
+                  <span>Dark Mode</span>
+                </>
+              ) : (
+                <>
+                  <Sun className="w-4 h-4 text-amber-400" />
+                  <span>Light Mode</span>
+                </>
+              )}
             </button>
           </div>
 
@@ -897,7 +1026,11 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
           <div className="px-3 pt-3">
             <button
               onClick={onNavigateMyCourses || onBack}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-slate-300 hover:text-white hover:bg-slate-800/50 transition-colors cursor-pointer"
+              className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                isLight
+                  ? "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                  : "text-slate-300 hover:text-white hover:bg-slate-800/50"
+              }`}
             >
               <ArrowLeft className="w-3.5 h-3.5" />
               <span>Back to My Courses</span>
@@ -905,7 +1038,13 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
           </div>
 
           {/* Current Course Summary Card */}
-          <div className="p-3 mx-3 my-2 bg-slate-900/90 border border-slate-800 rounded-xl space-y-2.5">
+          <div
+            className={`p-3 mx-3 my-2 border rounded-xl space-y-2.5 ${
+              isLight
+                ? "bg-slate-50 border-slate-200"
+                : "bg-slate-900/90 border-slate-800"
+            }`}
+          >
             <div className="relative aspect-video w-full rounded-lg overflow-hidden bg-slate-800">
               <img
                 src={activeCourse.thumbnail || activeCourse.thumbnailUrl}
@@ -924,23 +1063,39 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
             </div>
 
             <div className="space-y-1">
-              <h2 className="text-xs font-bold text-white line-clamp-2 leading-snug">
+              <h2
+                className={`text-xs font-bold line-clamp-2 leading-snug ${
+                  isLight ? "text-slate-900" : "text-white"
+                }`}
+              >
                 {activeCourse.title}
               </h2>
-              <div className="text-[11px] text-slate-400 truncate">
+              <div
+                className={`text-[11px] truncate ${
+                  isLight ? "text-slate-500" : "text-slate-400"
+                }`}
+              >
                 Instructor: {activeCourse.instructorName}
               </div>
             </div>
 
             {/* Course Progress Minimal Indicator */}
-            <div className="space-y-1 pt-1 border-t border-slate-800/80">
+            <div
+              className={`space-y-1 pt-1 border-t ${
+                isLight ? "border-slate-200" : "border-slate-800/80"
+              }`}
+            >
               <div className="flex items-center justify-between text-[11px]">
-                <span className="text-slate-400">Progress</span>
-                <span className="font-bold text-indigo-400">
+                <span className={isLight ? "text-slate-600" : "text-slate-400"}>Progress</span>
+                <span className={`font-bold ${isLight ? "text-indigo-600" : "text-indigo-400"}`}>
                   {enrollment?.progressPercent || 0}%
                 </span>
               </div>
-              <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+              <div
+                className={`w-full h-1.5 rounded-full overflow-hidden ${
+                  isLight ? "bg-slate-200" : "bg-slate-800"
+                }`}
+              >
                 <div
                   className="h-full bg-indigo-500 rounded-full transition-all duration-300"
                   style={{ width: `${enrollment?.progressPercent || 0}%` }}
@@ -951,7 +1106,11 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
 
           {/* Course-Related Navigation */}
           <div className="p-3 space-y-1 flex-1 overflow-y-auto">
-            <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+            <div
+              className={`px-2 py-1 text-[10px] font-semibold uppercase tracking-wider ${
+                isLight ? "text-slate-500" : "text-slate-400"
+              }`}
+            >
               Course Navigation
             </div>
 
@@ -960,7 +1119,11 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                 const el = document.getElementById("right-curriculum-panel");
                 if (el) el.scrollIntoView({ behavior: "smooth" });
               }}
-              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/70 transition-colors cursor-pointer text-left"
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer text-left ${
+                isLight
+                  ? "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                  : "text-slate-300 hover:text-white hover:bg-slate-800/70"
+              }`}
             >
               <Layers className="w-4 h-4 text-slate-400" />
               <span>Course Content</span>
@@ -970,7 +1133,11 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
               onClick={() => setActiveTab("notes")}
               className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer text-left ${
                 activeTab === "notes"
-                  ? "bg-indigo-600/20 text-indigo-300 font-semibold"
+                  ? isLight
+                    ? "bg-indigo-50 text-indigo-700 font-semibold"
+                    : "bg-indigo-600/20 text-indigo-300 font-semibold"
+                  : isLight
+                  ? "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
                   : "text-slate-300 hover:text-white hover:bg-slate-800/70"
               }`}
             >
@@ -982,7 +1149,11 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
               onClick={() => setActiveTab("discussion")}
               className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer text-left ${
                 activeTab === "discussion"
-                  ? "bg-indigo-600/20 text-indigo-300 font-semibold"
+                  ? isLight
+                    ? "bg-indigo-50 text-indigo-700 font-semibold"
+                    : "bg-indigo-600/20 text-indigo-300 font-semibold"
+                  : isLight
+                  ? "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
                   : "text-slate-300 hover:text-white hover:bg-slate-800/70"
               }`}
             >
@@ -994,7 +1165,11 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
               onClick={() => setActiveTab("resources")}
               className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors cursor-pointer text-left ${
                 activeTab === "resources"
-                  ? "bg-indigo-600/20 text-indigo-300 font-semibold"
+                  ? isLight
+                    ? "bg-indigo-50 text-indigo-700 font-semibold"
+                    : "bg-indigo-600/20 text-indigo-300 font-semibold"
+                  : isLight
+                  ? "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
                   : "text-slate-300 hover:text-white hover:bg-slate-800/70"
               }`}
             >
@@ -1011,14 +1186,28 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
               className="fixed inset-0 bg-black/70 backdrop-blur-xs animate-in fade-in"
               onClick={() => setIsMobileNavOpen(false)}
             />
-            <div className="relative w-72 max-w-[80vw] bg-[#0d131f] border-r border-slate-800 h-full flex flex-col z-50 p-4 space-y-4 animate-in slide-in-from-left duration-200">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-                <span className="text-xs font-bold text-white uppercase tracking-wider">
+            <div
+              className={`relative w-72 max-w-[80vw] border-r h-full flex flex-col z-50 p-4 space-y-4 animate-in slide-in-from-left duration-200 ${
+                isLight ? "bg-white border-slate-200 text-slate-900" : "bg-[#0d131f] border-slate-800 text-white"
+              }`}
+            >
+              <div
+                className={`flex items-center justify-between pb-2 border-b ${
+                  isLight ? "border-slate-200" : "border-slate-800"
+                }`}
+              >
+                <span
+                  className={`text-xs font-bold uppercase tracking-wider ${
+                    isLight ? "text-slate-900" : "text-white"
+                  }`}
+                >
                   Menu
                 </span>
                 <button
                   onClick={() => setIsMobileNavOpen(false)}
-                  className="p-1 rounded text-slate-400 hover:text-white"
+                  className={`p-1 rounded ${
+                    isLight ? "text-slate-500 hover:text-slate-900" : "text-slate-400 hover:text-white"
+                  }`}
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -1031,7 +1220,9 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                     if (onNavigateHome) onNavigateHome();
                     else onBack();
                   }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-medium text-slate-200 hover:bg-slate-800"
+                  className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-medium ${
+                    isLight ? "text-slate-700 hover:bg-slate-100" : "text-slate-200 hover:bg-slate-800"
+                  }`}
                 >
                   <Home className="w-4 h-4" /> Home
                 </button>
@@ -1041,7 +1232,9 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                     if (onNavigateMyCourses) onNavigateMyCourses();
                     else onBack();
                   }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-medium text-slate-200 hover:bg-slate-800"
+                  className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-medium ${
+                    isLight ? "text-slate-700 hover:bg-slate-100" : "text-slate-200 hover:bg-slate-800"
+                  }`}
                 >
                   <BookOpen className="w-4 h-4" /> My Courses
                 </button>
@@ -1051,7 +1244,9 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                     if (onNavigateCommunity) onNavigateCommunity();
                     else setActiveTab("discussion");
                   }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-medium text-slate-200 hover:bg-slate-800"
+                  className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-medium ${
+                    isLight ? "text-slate-700 hover:bg-slate-100" : "text-slate-200 hover:bg-slate-800"
+                  }`}
                 >
                   <MessageSquare className="w-4 h-4" /> Community
                 </button>
@@ -1061,31 +1256,79 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                     if (onNavigateCertificates) onNavigateCertificates();
                     else onOpenCertificate();
                   }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-medium text-slate-200 hover:bg-slate-800"
+                  className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-medium ${
+                    isLight ? "text-slate-700 hover:bg-slate-100" : "text-slate-200 hover:bg-slate-800"
+                  }`}
                 >
                   <Award className="w-4 h-4 text-amber-400" /> Certificates
                 </button>
+
+                {/* Sun / Moon Theme Toggle in Mobile Drawer */}
+                <button
+                  onClick={() => {
+                    toggleTheme();
+                  }}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-medium cursor-pointer ${
+                    isLight ? "text-slate-700 hover:bg-slate-100" : "text-slate-200 hover:bg-slate-800"
+                  }`}
+                >
+                  {isLight ? (
+                    <>
+                      <Moon className="w-4 h-4 text-slate-600" />
+                      <span>Switch to Dark Mode</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sun className="w-4 h-4 text-amber-400" />
+                      <span>Switch to Light Mode</span>
+                    </>
+                  )}
+                </button>
               </div>
 
-              <div className="pt-2 border-t border-slate-800">
+              <div
+                className={`pt-2 border-t ${
+                  isLight ? "border-slate-200" : "border-slate-800"
+                }`}
+              >
                 <button
                   onClick={() => {
                     setIsMobileNavOpen(false);
                     if (onNavigateMyCourses) onNavigateMyCourses();
                     else onBack();
                   }}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-slate-300 hover:bg-slate-800"
+                  className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold ${
+                    isLight ? "text-slate-700 hover:bg-slate-100" : "text-slate-300 hover:bg-slate-800"
+                  }`}
                 >
                   <ArrowLeft className="w-4 h-4" /> Back to My Courses
                 </button>
               </div>
 
-              <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl space-y-2">
-                <div className="text-xs font-bold text-white line-clamp-1">{activeCourse.title}</div>
-                <div className="text-[11px] text-slate-400">{activeCourse.instructorName}</div>
-                <div className="flex justify-between text-[11px] font-medium pt-1 border-t border-slate-800">
-                  <span className="text-slate-400">Progress</span>
-                  <span className="text-indigo-400 font-bold">{enrollment?.progressPercent || 0}%</span>
+              <div
+                className={`p-3 border rounded-xl space-y-2 ${
+                  isLight ? "bg-slate-50 border-slate-200" : "bg-slate-900 border-slate-800"
+                }`}
+              >
+                <div
+                  className={`text-xs font-bold line-clamp-1 ${
+                    isLight ? "text-slate-900" : "text-white"
+                  }`}
+                >
+                  {activeCourse.title}
+                </div>
+                <div className={`text-[11px] ${isLight ? "text-slate-500" : "text-slate-400"}`}>
+                  {activeCourse.instructorName}
+                </div>
+                <div
+                  className={`flex justify-between text-[11px] font-medium pt-1 border-t ${
+                    isLight ? "border-slate-200" : "border-slate-800"
+                  }`}
+                >
+                  <span className={isLight ? "text-slate-600" : "text-slate-400"}>Progress</span>
+                  <span className={isLight ? "text-indigo-600 font-bold" : "text-indigo-400 font-bold"}>
+                    {enrollment?.progressPercent || 0}%
+                  </span>
                 </div>
               </div>
             </div>
@@ -1095,27 +1338,59 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
         {/* ==================================================== */}
         {/* PART 2: CENTER CONTENT (Current Lesson + Video + Tabs) */}
         {/* ==================================================== */}
-        <main className="flex-1 flex flex-col overflow-y-auto bg-[#090d16] select-text">
+        <main
+          className={`flex-1 flex flex-col overflow-y-auto select-text transition-colors ${
+            isLight ? "bg-slate-50 text-slate-900" : "bg-[#090d16] text-slate-100"
+          }`}
+        >
           {/* Clean Top Header & Breadcrumbs */}
-          <div className="px-4 sm:px-6 pt-4 pb-3 border-b border-slate-800/80 bg-[#090d16]/95 sticky top-0 z-20 backdrop-blur-md space-y-2">
+          <div
+            className={`px-4 sm:px-6 pt-4 pb-3 border-b sticky top-0 z-20 backdrop-blur-md space-y-2 transition-colors ${
+              isLight
+                ? "bg-white/95 border-slate-200 shadow-2xs"
+                : "bg-[#090d16]/95 border-slate-800/80"
+            }`}
+          >
             {/* Breadcrumb: My Courses → Course → Section → Lesson */}
-            <div className="flex items-center gap-1.5 text-[11px] text-slate-400 truncate">
+            <div
+              className={`flex items-center gap-1.5 text-[11px] truncate ${
+                isLight ? "text-slate-500" : "text-slate-400"
+              }`}
+            >
               <button
                 onClick={onNavigateMyCourses || onBack}
-                className="hover:text-white transition-colors cursor-pointer shrink-0"
+                className={`transition-colors cursor-pointer shrink-0 ${
+                  isLight ? "hover:text-slate-900 text-slate-600" : "hover:text-white"
+                }`}
               >
                 My Courses
               </button>
-              <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
-              <span className="truncate max-w-[120px] sm:max-w-[200px] text-slate-400">
+              <ChevronRight
+                className={`w-3 h-3 shrink-0 ${
+                  isLight ? "text-slate-400" : "text-slate-600"
+                }`}
+              />
+              <span className="truncate max-w-[120px] sm:max-w-[200px]">
                 {activeCourse.title}
               </span>
-              <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
-              <span className="truncate max-w-[120px] sm:max-w-[180px] text-slate-400">
+              <ChevronRight
+                className={`w-3 h-3 shrink-0 ${
+                  isLight ? "text-slate-400" : "text-slate-600"
+                }`}
+              />
+              <span className="truncate max-w-[120px] sm:max-w-[180px]">
                 {currentSection?.title}
               </span>
-              <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
-              <span className="text-slate-200 font-medium truncate max-w-[150px] sm:max-w-[240px]">
+              <ChevronRight
+                className={`w-3 h-3 shrink-0 ${
+                  isLight ? "text-slate-400" : "text-slate-600"
+                }`}
+              />
+              <span
+                className={`truncate max-w-[150px] sm:max-w-[240px] font-semibold ${
+                  isLight ? "text-slate-900" : "text-slate-200"
+                }`}
+              >
                 {currentLecture.title}
               </span>
             </div>
@@ -1123,29 +1398,71 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
             {/* Lesson Title and Navigation Controls */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-0.5">
               <div className="min-w-0">
-                <h1 className="text-base sm:text-lg font-bold text-white truncate tracking-tight">
+                <h1
+                  className={`text-base sm:text-lg font-bold truncate tracking-tight ${
+                    isLight ? "text-slate-900" : "text-white"
+                  }`}
+                >
                   {currentLecture.title}
                 </h1>
                 {/* Lesson Progress Visible */}
-                <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
-                  <span className="text-slate-300 font-medium">Current lesson:</span>
-                  <span className="font-mono tabular-nums text-slate-200">
+                <div
+                  className={`flex items-center gap-2 text-xs mt-0.5 ${
+                    isLight ? "text-slate-600" : "text-slate-400"
+                  }`}
+                >
+                  <span className={isLight ? "text-slate-700 font-medium" : "text-slate-300 font-medium"}>
+                    Current lesson:
+                  </span>
+                  <span
+                    className={`font-mono tabular-nums ${
+                      isLight ? "text-slate-900 font-semibold" : "text-slate-200"
+                    }`}
+                  >
                     {formatTime(currentTime)} / {formatTime(duration || currentLecture.durationMinutes * 60)}
                   </span>
                   {isCompleted && (
-                    <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 font-semibold ml-1">
+                    <span className="inline-flex items-center gap-1 text-[11px] text-emerald-500 font-semibold ml-1">
                       <CheckCircle className="w-3 h-3" /> Completed
                     </span>
                   )}
                 </div>
               </div>
 
-              {/* Prev / Next Lesson Buttons */}
+              {/* Prev / Next Lesson Buttons + Sun/Moon Theme Toggle */}
               <div className="flex items-center gap-2 shrink-0">
+                {/* Sun / Moon Theme Toggle in Center Header */}
+                <button
+                  onClick={toggleTheme}
+                  aria-label={isLight ? "Switch to dark mode" : "Switch to light mode"}
+                  title={isLight ? "Switch to dark mode" : "Switch to light mode"}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer border ${
+                    isLight
+                      ? "bg-white hover:bg-slate-100 text-slate-700 border-slate-300 shadow-2xs"
+                      : "bg-slate-800/90 hover:bg-slate-700 text-slate-200 border-slate-700/60"
+                  }`}
+                >
+                  {isLight ? (
+                    <>
+                      <Moon className="w-3.5 h-3.5 text-slate-700" />
+                      <span className="hidden sm:inline">Dark</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sun className="w-3.5 h-3.5 text-amber-400" />
+                      <span className="hidden sm:inline">Light</span>
+                    </>
+                  )}
+                </button>
+
                 <button
                   onClick={goToPrev}
                   disabled={!hasPrev}
-                  className="px-3 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none text-xs font-semibold text-slate-200 flex items-center gap-1 transition-colors cursor-pointer border border-slate-700/60"
+                  className={`px-3 py-1.5 rounded-lg disabled:opacity-30 disabled:pointer-events-none text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer border ${
+                    isLight
+                      ? "bg-white hover:bg-slate-100 text-slate-700 border-slate-300 shadow-2xs"
+                      : "bg-slate-800/90 hover:bg-slate-700 text-slate-200 border-slate-700/60"
+                  }`}
                   title="Previous lesson"
                 >
                   <ChevronLeft className="w-3.5 h-3.5" />
@@ -1164,7 +1481,7 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
             </div>
           </div>
 
-          {/* LARGE VIDEO PLAYER (The Primary Focus - Clean & Uncluttered) */}
+          {/* LARGE VIDEO PLAYER (The Primary Focus - Clean & Uncluttered - Never Change Video Background) */}
           <div className="w-full bg-black relative flex items-center justify-center">
             <div
               ref={playerContainerRef}
@@ -1497,13 +1814,21 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
           </div>
 
           {/* Quick Lecture Completion Action Strip directly under video */}
-          <div className="px-4 sm:px-6 py-2.5 bg-[#0b0f19] border-b border-slate-800/80 flex items-center justify-between text-xs">
+          <div
+            className={`px-4 sm:px-6 py-2.5 border-b flex items-center justify-between text-xs transition-colors ${
+              isLight ? "bg-white border-slate-200" : "bg-[#0b0f19] border-slate-800/80"
+            }`}
+          >
             <div className="flex items-center gap-2">
               <button
                 onClick={() => markLectureComplete(course._id, currentLectureId)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
                   isCompleted
-                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                    ? isLight
+                      ? "bg-emerald-50 text-emerald-700 border border-emerald-300"
+                      : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                    : isLight
+                    ? "bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300"
                     : "bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700"
                 }`}
               >
@@ -1512,7 +1837,11 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
               </button>
             </div>
 
-            <div className="flex items-center gap-3 text-[11px] text-slate-400">
+            <div
+              className={`flex items-center gap-3 text-[11px] ${
+                isLight ? "text-slate-600" : "text-slate-400"
+              }`}
+            >
               <span>Section: {currentSection?.title}</span>
               <span>·</span>
               <span>Duration: {currentLecture.durationMinutes}m</span>
@@ -1523,7 +1852,11 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
           {/* SIMPLE TABS BELOW VIDEO */}
           {/* Exactly one tab visually active */}
           {/* ==================================================== */}
-          <div className="border-b border-slate-800 bg-[#0d131f] px-4 sm:px-6 shrink-0">
+          <div
+            className={`border-b px-4 sm:px-6 shrink-0 transition-colors ${
+              isLight ? "bg-white border-slate-200" : "bg-[#0d131f] border-slate-800"
+            }`}
+          >
             <div className="flex items-center gap-1 sm:gap-2 overflow-x-auto scrollbar-none py-1">
               {[
                 { id: "notes", label: "Notes", icon: FileText },
@@ -1541,7 +1874,11 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                     onClick={() => setActiveTab(tab.id as TabType)}
                     className={`px-3.5 py-2.5 rounded-md text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
                       isActive
-                        ? "bg-indigo-600/20 text-indigo-400 border-b-2 border-indigo-500 font-bold"
+                        ? isLight
+                          ? "bg-indigo-50 text-indigo-700 border-b-2 border-indigo-600 font-bold"
+                          : "bg-indigo-600/20 text-indigo-400 border-b-2 border-indigo-500 font-bold"
+                        : isLight
+                        ? "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
                         : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/40"
                     }`}
                   >
@@ -1560,27 +1897,41 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="text-sm font-bold text-white">Lecture Notes</h3>
-                    <p className="text-[11px] text-slate-400">
+                    <h3
+                      className={`text-sm font-bold ${
+                        isLight ? "text-slate-900" : "text-white"
+                      }`}
+                    >
+                      Lecture Notes
+                    </h3>
+                    <p className={`text-[11px] ${isLight ? "text-slate-600" : "text-slate-400"}`}>
                       Personal notes for this course. Automatically saved to your device.
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
                       onClick={handleInsertTimestampToNotes}
-                      className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                      className={`px-2.5 py-1 text-xs font-medium rounded-lg flex items-center gap-1 transition-colors cursor-pointer border ${
+                        isLight
+                          ? "bg-white hover:bg-slate-100 text-slate-700 border-slate-300 shadow-2xs"
+                          : "bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border-transparent"
+                      }`}
                       title="Insert current video timestamp"
                     >
-                      <Clock className="w-3 h-3 text-indigo-400" />
+                      <Clock className="w-3 h-3 text-indigo-500" />
                       <span>Timestamp ({formatTime(currentTime)})</span>
                     </button>
                     <button
                       onClick={handleCopyNotes}
-                      className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                      className={`px-2.5 py-1 text-xs font-medium rounded-lg flex items-center gap-1 transition-colors cursor-pointer border ${
+                        isLight
+                          ? "bg-white hover:bg-slate-100 text-slate-700 border-slate-300 shadow-2xs"
+                          : "bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border-transparent"
+                      }`}
                     >
                       {copiedNotes ? (
                         <>
-                          <Check className="w-3 h-3 text-emerald-400" />
+                          <Check className="w-3 h-3 text-emerald-500" />
                           <span>Copied!</span>
                         </>
                       ) : (
@@ -1601,10 +1952,18 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                   }}
                   placeholder="Take notes while watching the video. Click 'Timestamp' above to bookmark key moments in the lecture..."
                   rows={10}
-                  className="w-full bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 text-xs text-slate-200 focus:outline-hidden focus:border-indigo-500 font-mono leading-relaxed"
+                  className={`w-full rounded-xl p-3.5 text-xs focus:outline-hidden font-mono leading-relaxed transition-colors border ${
+                    isLight
+                      ? "bg-white border-slate-300 text-slate-900 shadow-2xs focus:border-indigo-600 placeholder:text-slate-400"
+                      : "bg-slate-900/90 border-slate-800 text-slate-200 focus:border-indigo-500 placeholder:text-slate-500"
+                  }`}
                 />
 
-                <div className="flex items-center justify-between text-[11px] text-slate-400">
+                <div
+                  className={`flex items-center justify-between text-[11px] ${
+                    isLight ? "text-slate-500" : "text-slate-400"
+                  }`}
+                >
                   <span>Characters: {personalNotes.length}</span>
                   <button
                     onClick={() => {
@@ -1613,7 +1972,11 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                         localStorage.removeItem(`notes_${course._id}`);
                       }
                     }}
-                    className="text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
+                    className={`transition-colors cursor-pointer ${
+                      isLight
+                        ? "text-slate-500 hover:text-rose-600"
+                        : "text-slate-400 hover:text-rose-400"
+                    }`}
                   >
                     Clear notes
                   </button>
@@ -1626,18 +1989,28 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="text-sm font-bold text-white">Lesson Code & Solution</h3>
-                    <p className="text-[11px] text-slate-400">
+                    <h3
+                      className={`text-sm font-bold ${
+                        isLight ? "text-slate-900" : "text-white"
+                      }`}
+                    >
+                      Lesson Code & Solution
+                    </h3>
+                    <p className={`text-[11px] ${isLight ? "text-slate-600" : "text-slate-400"}`}>
                       Starter template and reference implementation for this lesson.
                     </p>
                   </div>
                   <button
                     onClick={handleCopyCode}
-                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border ${
+                      isLight
+                        ? "bg-white hover:bg-slate-100 text-slate-700 border-slate-300 shadow-2xs"
+                        : "bg-slate-800 hover:bg-slate-700 text-slate-200 border-transparent"
+                    }`}
                   >
                     {copiedCode ? (
                       <>
-                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        <Check className="w-3.5 h-3.5 text-emerald-500" />
                         <span>Copied Code</span>
                       </>
                     ) : (
@@ -1650,15 +2023,25 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                 </div>
 
                 {/* Code Editor Box */}
-                <div className="rounded-xl border border-slate-800 bg-slate-950 overflow-hidden font-mono text-xs shadow-md">
-                  <div className="px-4 py-2 bg-slate-900 border-b border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
+                <div
+                  className={`rounded-xl border overflow-hidden font-mono text-xs shadow-md ${
+                    isLight ? "border-slate-300 bg-slate-900" : "border-slate-800 bg-slate-950"
+                  }`}
+                >
+                  <div
+                    className={`px-4 py-2 border-b flex items-center justify-between text-[11px] ${
+                      isLight
+                        ? "bg-slate-800 border-slate-700 text-slate-300"
+                        : "bg-slate-900 border-slate-800 text-slate-400"
+                    }`}
+                  >
                     <span className="flex items-center gap-1.5">
                       <Code className="w-3.5 h-3.5 text-indigo-400" />
                       solution.ts
                     </span>
                     <span>TypeScript</span>
                   </div>
-                  <pre className="p-4 text-slate-300 overflow-x-auto text-[11px] leading-relaxed">
+                  <pre className="p-4 text-slate-200 overflow-x-auto text-[11px] leading-relaxed">
                     <code>{sampleCodeSnippet}</code>
                   </pre>
                 </div>
@@ -1666,19 +2049,39 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                 {/* Attached code resources */}
                 {currentLecture.resources?.filter((r) => r.fileType === "code").length > 0 && (
                   <div className="space-y-2 pt-2">
-                    <h4 className="text-xs font-bold text-slate-300">Attached Code Files</h4>
+                    <h4
+                      className={`text-xs font-bold ${
+                        isLight ? "text-slate-800" : "text-slate-300"
+                      }`}
+                    >
+                      Attached Code Files
+                    </h4>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       {currentLecture.resources
                         .filter((r) => r.fileType === "code")
                         .map((res, i) => (
                           <div
                             key={i}
-                            className="p-3 bg-slate-900 border border-slate-800 rounded-lg flex items-center justify-between text-xs"
+                            className={`p-3 border rounded-lg flex items-center justify-between text-xs ${
+                              isLight
+                                ? "bg-white border-slate-200 shadow-2xs"
+                                : "bg-slate-900 border-slate-800"
+                            }`}
                           >
-                            <span className="font-medium text-white truncate mr-2">{res.title}</span>
+                            <span
+                              className={`font-medium truncate mr-2 ${
+                                isLight ? "text-slate-900" : "text-white"
+                              }`}
+                            >
+                              {res.title}
+                            </span>
                             <button
                               onClick={() => alert(`Simulating download of ${res.title}`)}
-                              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] rounded flex items-center gap-1 cursor-pointer"
+                              className={`px-2.5 py-1 text-[11px] rounded flex items-center gap-1 cursor-pointer border ${
+                                isLight
+                                  ? "bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200"
+                                  : "bg-slate-800 hover:bg-slate-700 text-slate-300 border-transparent"
+                              }`}
                             >
                               <Download className="w-3 h-3" /> Get
                             </button>
@@ -1694,48 +2097,80 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
             {activeTab === "explanation" && (
               <div className="space-y-4">
                 <div className="space-y-1">
-                  <h3 className="text-sm font-bold text-white">Lesson Overview</h3>
-                  <p className="text-xs text-slate-300 leading-relaxed">
+                  <h3
+                    className={`text-sm font-bold ${
+                      isLight ? "text-slate-900" : "text-white"
+                    }`}
+                  >
+                    Lesson Overview
+                  </h3>
+                  <p
+                    className={`text-xs leading-relaxed ${
+                      isLight ? "text-slate-700" : "text-slate-300"
+                    }`}
+                  >
                     {currentLecture.description ||
                       `In this lecture "${currentLecture.title}", we explore core concepts, industry standard architectures, and step-by-step implementation code for production systems.`}
                   </p>
                 </div>
 
                 <div className="space-y-2 pt-2">
-                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                  <h4
+                    className={`text-xs font-bold uppercase tracking-wider ${
+                      isLight ? "text-slate-800" : "text-white"
+                    }`}
+                  >
                     Key Takeaways
                   </h4>
-                  <ul className="space-y-1.5 text-xs text-slate-300">
+                  <ul
+                    className={`space-y-1.5 text-xs ${
+                      isLight ? "text-slate-700" : "text-slate-300"
+                    }`}
+                  >
                     <li className="flex items-start gap-2">
-                      <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
                       <span>Mastery of the core patterns introduced in {currentSection?.title}.</span>
                     </li>
                     <li className="flex items-start gap-2">
-                      <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
                       <span>Practical hands-on implementation matching real-world engineering standards.</span>
                     </li>
                     <li className="flex items-start gap-2">
-                      <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
                       <span>Preparation for the accompanying section quiz and final certification exam.</span>
                     </li>
                   </ul>
                 </div>
 
                 {/* Video Delivery Technical Metadata */}
-                <div className="pt-4 border-t border-slate-800/80 space-y-2">
-                  <h4 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                <div
+                  className={`pt-4 border-t space-y-2 ${
+                    isLight ? "border-slate-200" : "border-slate-800/80"
+                  }`}
+                >
+                  <h4
+                    className={`text-[11px] font-bold uppercase tracking-wider ${
+                      isLight ? "text-slate-600" : "text-slate-400"
+                    }`}
+                  >
                     Video Stream Details
                   </h4>
-                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 text-xs font-mono text-slate-300 space-y-1">
+                  <div
+                    className={`border rounded-xl p-3 text-xs font-mono space-y-1 ${
+                      isLight
+                        ? "bg-slate-50 border-slate-200 text-slate-800"
+                        : "bg-slate-900 border-slate-800 text-slate-300"
+                    }`}
+                  >
                     <div>
-                      <span className="text-slate-500">Public ID:</span>{" "}
+                      <span className={isLight ? "text-slate-500" : "text-slate-500"}>Public ID:</span>{" "}
                       {currentLecture.videoPublicId || currentLecture.videoKey || "Direct Delivery"}
                     </div>
                     <div>
-                      <span className="text-slate-500">Protocol:</span> Cloudinary Signed Adaptive Delivery
+                      <span className={isLight ? "text-slate-500" : "text-slate-500"}>Protocol:</span> Cloudinary Signed Adaptive Delivery
                     </div>
                     <div>
-                      <span className="text-slate-500">Status:</span> Active & Authenticated
+                      <span className={isLight ? "text-slate-500" : "text-slate-500"}>Status:</span> Active & Authenticated
                     </div>
                   </div>
                 </div>
@@ -1745,35 +2180,59 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
             {/* TAB 4: DISCUSSION */}
             {activeTab === "discussion" && (
               <div className="space-y-4">
-                <DiscussionForum courseId={course._id} lectureId={currentLectureId} />
+                <DiscussionForum courseId={course._id} lectureId={currentLectureId} theme={theme} />
               </div>
             )}
 
             {/* TAB 5: RESOURCES */}
             {activeTab === "resources" && (
               <div className="space-y-4">
-                <h3 className="text-sm font-bold text-white">Lecture Downloads</h3>
+                <h3
+                  className={`text-sm font-bold ${
+                    isLight ? "text-slate-900" : "text-white"
+                  }`}
+                >
+                  Lecture Downloads
+                </h3>
                 {currentLecture.resources && currentLecture.resources.length > 0 ? (
                   <div className="space-y-2">
                     {currentLecture.resources.map((res, i) => (
                       <div
                         key={i}
-                        className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center justify-between text-xs"
+                        className={`border rounded-xl p-3 flex items-center justify-between text-xs ${
+                          isLight
+                            ? "bg-white border-slate-200 shadow-2xs"
+                            : "bg-slate-900 border-slate-800"
+                        }`}
                       >
                         <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold uppercase text-[10px]">
+                          <div className="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-500 flex items-center justify-center font-bold uppercase text-[10px]">
                             {res.fileType}
                           </div>
                           <div>
-                            <div className="font-semibold text-white">{res.title}</div>
-                            <div className="text-[10px] text-slate-400">
+                            <div
+                              className={`font-semibold ${
+                                isLight ? "text-slate-900" : "text-white"
+                              }`}
+                            >
+                              {res.title}
+                            </div>
+                            <div
+                              className={`text-[10px] ${
+                                isLight ? "text-slate-500" : "text-slate-400"
+                              }`}
+                            >
                               {res.sizeMb} MB • Verified file
                             </div>
                           </div>
                         </div>
                         <button
                           onClick={() => alert(`Simulating download of ${res.title}`)}
-                          className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                          className={`px-3 py-1.5 text-xs font-medium rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border ${
+                            isLight
+                              ? "bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200"
+                              : "bg-slate-800 hover:bg-slate-700 text-slate-200 border-transparent"
+                          }`}
                         >
                           <Download className="w-3.5 h-3.5" /> Download
                         </button>
@@ -1781,7 +2240,11 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                     ))}
                   </div>
                 ) : (
-                  <p className="text-xs text-slate-400 italic">
+                  <p
+                    className={`text-xs italic ${
+                      isLight ? "text-slate-500" : "text-slate-400"
+                    }`}
+                  >
                     No downloadable assets attached to this lecture.
                   </p>
                 )}
@@ -1792,15 +2255,31 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
             {activeTab === "practice" && (
               <div className="space-y-5">
                 <div>
-                  <h3 className="text-sm font-bold text-white">Quick Practice & Knowledge Check</h3>
-                  <p className="text-[11px] text-slate-400">
+                  <h3
+                    className={`text-sm font-bold ${
+                      isLight ? "text-slate-900" : "text-white"
+                    }`}
+                  >
+                    Quick Practice & Knowledge Check
+                  </h3>
+                  <p className={`text-[11px] ${isLight ? "text-slate-600" : "text-slate-400"}`}>
                     Test your understanding of the concepts covered in this lesson.
                   </p>
                 </div>
 
                 {/* Interactive Practice Question 1 */}
-                <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl space-y-3">
-                  <div className="text-xs font-bold text-white">
+                <div
+                  className={`p-4 border rounded-xl space-y-3 ${
+                    isLight
+                      ? "bg-white border-slate-200 shadow-2xs"
+                      : "bg-slate-900 border-slate-800"
+                  }`}
+                >
+                  <div
+                    className={`text-xs font-bold ${
+                      isLight ? "text-slate-900" : "text-white"
+                    }`}
+                  >
                     1. What is the primary purpose of breaking application logic into modular sections?
                   </div>
                   <div className="space-y-1.5">
@@ -1816,12 +2295,18 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                         <button
                           key={optIndex}
                           onClick={() => setPracticeAnswers((prev) => ({ ...prev, q1: optIndex }))}
-                          className={`w-full text-left p-2.5 rounded-lg text-xs transition-colors flex items-center justify-between cursor-pointer ${
+                          className={`w-full text-left p-2.5 rounded-lg text-xs transition-colors flex items-center justify-between cursor-pointer border ${
                             selected
                               ? isCorrectOption
-                                ? "bg-emerald-950/60 border border-emerald-500/50 text-emerald-200"
-                                : "bg-rose-950/60 border border-rose-500/50 text-rose-200"
-                              : "bg-slate-800/60 hover:bg-slate-800 text-slate-300"
+                                ? isLight
+                                  ? "bg-emerald-50 border-emerald-400 text-emerald-900 font-semibold"
+                                  : "bg-emerald-950/60 border-emerald-500/50 text-emerald-200"
+                                : isLight
+                                ? "bg-rose-50 border-rose-400 text-rose-900 font-semibold"
+                                : "bg-rose-950/60 border-rose-500/50 text-rose-200"
+                              : isLight
+                              ? "bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200"
+                              : "bg-slate-800/60 hover:bg-slate-800 text-slate-300 border-transparent"
                           }`}
                         >
                           <span>{opt}</span>
@@ -1838,21 +2323,45 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
 
                 {/* Section Quiz Prompt if Available */}
                 {currentSectionQuiz && (
-                  <div className="p-4 bg-amber-950/20 border border-amber-500/30 rounded-xl space-y-2.5">
+                  <div
+                    className={`p-4 border rounded-xl space-y-2.5 ${
+                      isLight
+                        ? "bg-amber-50/90 border-amber-300 text-amber-950 shadow-2xs"
+                        : "bg-amber-950/20 border-amber-500/30 text-amber-200"
+                    }`}
+                  >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                        <span
+                          className={`px-2 py-0.5 text-[10px] font-bold rounded border ${
+                            isLight
+                              ? "bg-amber-200 text-amber-900 border-amber-300"
+                              : "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                          }`}
+                        >
                           QUIZ
                         </span>
-                        <h4 className="text-xs font-bold text-amber-200">
+                        <h4
+                          className={`text-xs font-bold ${
+                            isLight ? "text-amber-950" : "text-amber-200"
+                          }`}
+                        >
                           {currentSectionQuiz.title}
                         </h4>
                       </div>
-                      <span className="text-[11px] font-mono text-amber-300">
+                      <span
+                        className={`text-[11px] font-mono ${
+                          isLight ? "text-amber-800 font-bold" : "text-amber-300"
+                        }`}
+                      >
                         {currentSectionQuiz.totalMarks || 10} pts
                       </span>
                     </div>
-                    <p className="text-xs text-slate-300">
+                    <p
+                      className={`text-xs ${
+                        isLight ? "text-amber-900" : "text-slate-300"
+                      }`}
+                    >
                       Ready to test your knowledge for {currentSection?.title}? Take the official section quiz now.
                     </p>
                     <button
@@ -1874,19 +2383,33 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
         {/* ==================================================== */}
         <aside
           id="right-curriculum-panel"
-          className="w-80 shrink-0 bg-[#0d131f] border-l border-slate-800 flex flex-col hidden lg:flex select-none"
+          className={`w-80 shrink-0 border-l flex flex-col hidden lg:flex select-none transition-colors ${
+            isLight
+              ? "bg-white border-slate-200 text-slate-800"
+              : "bg-[#0d131f] border-slate-800 text-slate-100"
+          }`}
         >
           {/* Top Progress Box */}
-          <div className="p-4 border-b border-slate-800 space-y-3 bg-[#0d131f]">
+          <div
+            className={`p-4 border-b space-y-3 transition-colors ${
+              isLight ? "bg-white border-slate-200" : "bg-[#0d131f] border-slate-800"
+            }`}
+          >
             <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-slate-400">Course Progress</span>
-              <span className="text-sm font-bold text-indigo-400">
+              <span className={`text-xs font-semibold ${isLight ? "text-slate-600" : "text-slate-400"}`}>
+                Course Progress
+              </span>
+              <span className={`text-sm font-bold ${isLight ? "text-indigo-600" : "text-indigo-400"}`}>
                 {enrollment?.progressPercent || 0}%
               </span>
             </div>
 
             {/* Progress Bar */}
-            <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+            <div
+              className={`w-full h-2 rounded-full overflow-hidden ${
+                isLight ? "bg-slate-200" : "bg-slate-800"
+              }`}
+            >
               <div
                 className="bg-indigo-500 h-full rounded-full transition-all duration-500 ease-out"
                 style={{ width: `${enrollment?.progressPercent || 0}%` }}
@@ -1895,39 +2418,73 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
 
             {/* Stat Counters: Sections, Lessons, Quizzes */}
             <div className="grid grid-cols-3 gap-2 pt-1 text-center font-mono text-[11px]">
-              <div className="bg-slate-900 border border-slate-800/80 rounded-lg p-2">
-                <div className="text-white font-bold">
+              <div
+                className={`border rounded-lg p-2 ${
+                  isLight
+                    ? "bg-slate-50 border-slate-200 text-slate-900"
+                    : "bg-slate-900 border-slate-800/80 text-white"
+                }`}
+              >
+                <div className="font-bold">
                   {completedSectionsCount} / {totalSectionsCount}
                 </div>
-                <div className="text-[10px] text-slate-400">Sections</div>
+                <div className={`text-[10px] ${isLight ? "text-slate-500" : "text-slate-400"}`}>
+                  Sections
+                </div>
               </div>
-              <div className="bg-slate-900 border border-slate-800/80 rounded-lg p-2">
-                <div className="text-white font-bold">
+              <div
+                className={`border rounded-lg p-2 ${
+                  isLight
+                    ? "bg-slate-50 border-slate-200 text-slate-900"
+                    : "bg-slate-900 border-slate-800/80 text-white"
+                }`}
+              >
+                <div className="font-bold">
                   {completedLecturesCount} / {totalLecturesCount}
                 </div>
-                <div className="text-[10px] text-slate-400">Lessons</div>
+                <div className={`text-[10px] ${isLight ? "text-slate-500" : "text-slate-400"}`}>
+                  Lessons
+                </div>
               </div>
-              <div className="bg-slate-900 border border-slate-800/80 rounded-lg p-2">
-                <div className="text-white font-bold">
+              <div
+                className={`border rounded-lg p-2 ${
+                  isLight
+                    ? "bg-slate-50 border-slate-200 text-slate-900"
+                    : "bg-slate-900 border-slate-800/80 text-white"
+                }`}
+              >
+                <div className="font-bold">
                   {completedQuizzesCount} / {totalQuizzesCount}
                 </div>
-                <div className="text-[10px] text-slate-400">Quizzes</div>
+                <div className={`text-[10px] ${isLight ? "text-slate-500" : "text-slate-400"}`}>
+                  Quizzes
+                </div>
               </div>
             </div>
           </div>
 
           {/* Course Content Header */}
-          <div className="px-4 py-2.5 border-b border-slate-800/80 bg-slate-900/50 flex items-center justify-between">
-            <span className="text-xs font-bold text-white uppercase tracking-wider">
+          <div
+            className={`px-4 py-2.5 border-b flex items-center justify-between ${
+              isLight
+                ? "bg-slate-50 border-slate-200 text-slate-900"
+                : "bg-slate-900/50 border-slate-800/80 text-white"
+            }`}
+          >
+            <span className="text-xs font-bold uppercase tracking-wider">
               Course Content
             </span>
-            <span className="text-[11px] text-slate-400">
+            <span className={`text-[11px] ${isLight ? "text-slate-500" : "text-slate-400"}`}>
               {completedLecturesCount} of {allLectures.length} completed
             </span>
           </div>
 
           {/* Collapsible Sections List */}
-          <div className="overflow-y-auto flex-1 divide-y divide-slate-800/60">
+          <div
+            className={`overflow-y-auto flex-1 divide-y ${
+              isLight ? "divide-slate-200" : "divide-slate-800/60"
+            }`}
+          >
             {activeCourse.sections.map((section, sIdx) => {
               const isExpanded = expandedSectionIds.includes(section._id);
               const sectionLecs = section.lectures;
@@ -1941,18 +2498,24 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                   {/* Collapsible Section Header */}
                   <button
                     onClick={() => toggleSection(section._id)}
-                    className="w-full px-4 py-3 text-left flex items-center justify-between hover:bg-slate-800/40 transition-colors cursor-pointer"
+                    className={`w-full px-4 py-3 text-left flex items-center justify-between transition-colors cursor-pointer ${
+                      isLight ? "hover:bg-slate-50 text-slate-800" : "hover:bg-slate-800/40 text-slate-200"
+                    }`}
                   >
                     <div className="min-w-0 pr-2">
-                      <div className="text-xs font-bold text-slate-200 truncate">
+                      <div className="text-xs font-bold truncate">
                         Section {sIdx + 1}: {section.title}
                       </div>
-                      <div className="text-[10px] text-slate-400 mt-0.5">
+                      <div
+                        className={`text-[10px] mt-0.5 ${
+                          isLight ? "text-slate-500" : "text-slate-400"
+                        }`}
+                      >
                         {completedInSection} / {sectionLecs.length} Lessons
                         {sectionQuizzes.length > 0 && ` · ${sectionQuizzes.length} Quiz`}
                       </div>
                     </div>
-                    <div className="text-slate-400 shrink-0">
+                    <div className={isLight ? "text-slate-400 shrink-0" : "text-slate-400 shrink-0"}>
                       {isExpanded ? (
                         <ChevronUp className="w-4 h-4" />
                       ) : (
@@ -1963,7 +2526,13 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
 
                   {/* Expanded Section Items */}
                   {isExpanded && (
-                    <div className="bg-slate-950/60 divide-y divide-slate-900/80">
+                    <div
+                      className={`divide-y ${
+                        isLight
+                          ? "bg-slate-50/70 divide-slate-200"
+                          : "bg-slate-950/60 divide-slate-900/80"
+                      }`}
+                    >
                       {/* Lessons */}
                       {sectionLecs.map((lecture) => {
                         const isCurrent = lecture._id === currentLectureId;
@@ -1975,20 +2544,24 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                             onClick={() => switchLecture(lecture._id)}
                             className={`w-full px-4 py-2.5 text-left text-xs transition-colors flex items-start gap-2.5 cursor-pointer ${
                               isCurrent
-                                ? "bg-indigo-950/60 text-white border-l-2 border-indigo-500"
+                                ? isLight
+                                  ? "bg-indigo-50 text-indigo-950 font-bold border-l-2 border-indigo-600"
+                                  : "bg-indigo-950/60 text-white font-bold border-l-2 border-indigo-500"
+                                : isLight
+                                ? "hover:bg-slate-100 text-slate-700"
                                 : "hover:bg-slate-800/40 text-slate-300"
                             }`}
                           >
                             {/* Visual State Icon */}
                             <div className="pt-0.5 shrink-0">
                               {isLecDone ? (
-                                <CheckCircle className="w-4 h-4 text-emerald-400" />
+                                <CheckCircle className="w-4 h-4 text-emerald-500" />
                               ) : isCurrent ? (
                                 <div className="w-4 h-4 rounded-full bg-indigo-600 text-white flex items-center justify-center">
                                   <Play className="w-2.5 h-2.5 fill-current ml-0.5" />
                                 </div>
                               ) : (
-                                <Circle className="w-4 h-4 text-slate-600" />
+                                <Circle className={`w-4 h-4 ${isLight ? "text-slate-400" : "text-slate-600"}`} />
                               )}
                             </div>
 
@@ -1996,12 +2569,20 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                             <div className="flex-1 min-w-0">
                               <div
                                 className={`text-xs leading-snug line-clamp-2 ${
-                                  isCurrent ? "font-bold text-white" : "font-medium"
+                                  isCurrent
+                                    ? isLight
+                                      ? "font-bold text-indigo-950"
+                                      : "font-bold text-white"
+                                    : "font-medium"
                                 }`}
                               >
                                 {lecture.title}
                               </div>
-                              <div className="text-[10px] text-slate-400 mt-0.5 font-mono">
+                              <div
+                                className={`text-[10px] mt-0.5 font-mono ${
+                                  isLight ? "text-slate-500" : "text-slate-400"
+                                }`}
+                              >
                                 {isCurrent
                                   ? `${formatTime(currentTime)} / ${formatTime(
                                       duration || lecture.durationMinutes * 60
@@ -2024,20 +2605,42 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                           <div
                             key={qId}
                             onClick={() => onOpenQuiz(q)}
-                            className="w-full px-4 py-2.5 text-left text-xs transition-colors flex items-center justify-between hover:bg-amber-950/30 text-amber-200 border-l-2 border-amber-500 bg-amber-950/15 cursor-pointer"
+                            className={`w-full px-4 py-2.5 text-left text-xs transition-colors flex items-center justify-between border-l-2 cursor-pointer ${
+                              isLight
+                                ? "hover:bg-amber-100/70 text-amber-950 border-amber-600 bg-amber-50/80"
+                                : "hover:bg-amber-950/30 text-amber-200 border-amber-500 bg-amber-950/15"
+                            }`}
                           >
                             <div className="flex items-center gap-2.5 min-w-0 pr-2">
-                              <HelpCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                              <HelpCircle
+                                className={`w-4 h-4 shrink-0 ${
+                                  isLight ? "text-amber-600" : "text-amber-400"
+                                }`}
+                              />
                               <div className="min-w-0">
                                 <div className="flex items-center gap-1.5">
-                                  <span className="font-semibold text-amber-100 truncate text-xs">
+                                  <span
+                                    className={`truncate text-xs ${
+                                      isLight ? "font-bold text-amber-950" : "font-semibold text-amber-100"
+                                    }`}
+                                  >
                                     {q.title}
                                   </span>
-                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0">
+                                  <span
+                                    className={`px-1.5 py-0.2 rounded text-[9px] font-bold border shrink-0 ${
+                                      isLight
+                                        ? "bg-amber-200 text-amber-900 border-amber-300"
+                                        : "bg-amber-500/20 text-amber-300 border-amber-500/30"
+                                    }`}
+                                  >
                                     QUIZ
                                   </span>
                                 </div>
-                                <div className="text-[10px] text-amber-300/80 mt-0.5">
+                                <div
+                                  className={`text-[10px] mt-0.5 ${
+                                    isLight ? "text-amber-800" : "text-amber-300/80"
+                                  }`}
+                                >
                                   {q.questionsCount || q.questions?.length || 0} Questions ·{" "}
                                   {q.totalMarks || 10} pts
                                 </div>
@@ -2045,11 +2648,17 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                             </div>
 
                             {attempt ? (
-                              <span className="text-[10px] font-bold text-emerald-400 shrink-0">
+                              <span className="text-[10px] font-bold text-emerald-500 shrink-0">
                                 {attempt.score}%
                               </span>
                             ) : (
-                              <span className="px-2 py-0.5 bg-amber-500/20 text-amber-300 text-[10px] font-bold rounded-sm shrink-0">
+                              <span
+                                className={`px-2 py-0.5 text-[10px] font-bold rounded-sm shrink-0 border ${
+                                  isLight
+                                    ? "bg-amber-200 text-amber-900 border-amber-300"
+                                    : "bg-amber-500/20 text-amber-300 border-transparent"
+                                }`}
+                              >
                                 Start
                               </span>
                             )}
@@ -2064,17 +2673,33 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
 
             {/* Official Certification Exam in Curriculum */}
             {quiz && (
-              <div className="p-4 bg-indigo-950/30 border-t border-indigo-900/40 space-y-2">
+              <div
+                className={`p-4 border-t space-y-2 ${
+                  isLight
+                    ? "bg-indigo-50/70 border-indigo-100 text-slate-700"
+                    : "bg-indigo-950/30 border-indigo-900/40 text-slate-400"
+                }`}
+              >
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-amber-300 font-bold text-xs">
-                    <Award className="w-4 h-4 text-amber-400" />
+                  <div
+                    className={`flex items-center gap-1.5 font-bold text-xs ${
+                      isLight ? "text-indigo-900" : "text-amber-300"
+                    }`}
+                  >
+                    <Award className="w-4 h-4 text-amber-500" />
                     <span>Final Certification Exam</span>
                   </div>
-                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${
+                      isLight
+                        ? "bg-amber-100 text-amber-800 border-amber-300"
+                        : "bg-amber-500/20 text-amber-300 border-amber-500/30"
+                    }`}
+                  >
                     QUIZ
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-snug">
+                <p className={`text-[11px] leading-snug ${isLight ? "text-slate-600" : "text-slate-400"}`}>
                   Timed exam ({quiz.durationMinutes} min). Pass with ≥{quiz.passingScore}% to earn your verified certificate.
                 </p>
                 <button
@@ -2096,30 +2721,58 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
               className="fixed inset-0 bg-black/70 backdrop-blur-xs animate-in fade-in"
               onClick={() => setIsMobileCurriculumOpen(false)}
             />
-            <div className="relative w-80 max-w-[85vw] bg-[#0d131f] border-l border-slate-800 h-full flex flex-col z-50 animate-in slide-in-from-right duration-200">
-              <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+            <div
+              className={`relative w-80 max-w-[85vw] border-l h-full flex flex-col z-50 animate-in slide-in-from-right duration-200 ${
+                isLight ? "bg-white border-slate-200 text-slate-800" : "bg-[#0d131f] border-slate-800 text-white"
+              }`}
+            >
+              <div
+                className={`p-4 border-b flex items-center justify-between ${
+                  isLight ? "border-slate-200" : "border-slate-800"
+                }`}
+              >
                 <div>
-                  <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                  <h3
+                    className={`text-xs font-bold uppercase tracking-wider ${
+                      isLight ? "text-slate-900" : "text-white"
+                    }`}
+                  >
                     Course Content
                   </h3>
-                  <div className="text-[10px] text-slate-400 mt-0.5">
+                  <div
+                    className={`text-[10px] mt-0.5 ${
+                      isLight ? "text-slate-500" : "text-slate-400"
+                    }`}
+                  >
                     {completedLecturesCount} of {allLectures.length} completed
                   </div>
                 </div>
                 <button
                   onClick={() => setIsMobileCurriculumOpen(false)}
-                  className="p-1 rounded text-slate-400 hover:text-white"
+                  className={`p-1 rounded ${
+                    isLight ? "text-slate-500 hover:text-slate-900" : "text-slate-400 hover:text-white"
+                  }`}
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
-              <div className="p-3 border-b border-slate-800 bg-slate-900">
+              <div
+                className={`p-3 border-b ${
+                  isLight ? "bg-slate-50 border-slate-200" : "bg-slate-900 border-slate-800"
+                }`}
+              >
                 <div className="flex justify-between text-xs font-medium mb-1">
-                  <span className="text-slate-400">Course Progress</span>
-                  <span className="text-indigo-400 font-bold">{enrollment?.progressPercent || 0}%</span>
+                  <span className={isLight ? "text-slate-600" : "text-slate-400"}>Course Progress</span>
+                  <span className={isLight ? "text-indigo-600 font-bold" : "text-indigo-400 font-bold"}>
+                    {enrollment?.progressPercent || 0}%
+                  </span>
                 </div>
-                <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                <div
+                  className={`w-full h-1.5 rounded-full overflow-hidden ${
+                    isLight ? "bg-slate-200" : "bg-slate-800"
+                  }`}
+                >
                   <div
                     className="bg-indigo-500 h-full rounded-full"
                     style={{ width: `${enrollment?.progressPercent || 0}%` }}
@@ -2128,13 +2781,25 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
               </div>
 
               {/* Mobile Curriculum Scroll Area */}
-              <div className="overflow-y-auto flex-1 divide-y divide-slate-800/60">
+              <div
+                className={`overflow-y-auto flex-1 divide-y ${
+                  isLight ? "divide-slate-200" : "divide-slate-800/60"
+                }`}
+              >
                 {activeCourse.sections.map((section, sIdx) => (
                   <div key={section._id}>
-                    <div className="px-4 py-2.5 bg-slate-900/60 text-xs font-bold text-slate-300">
+                    <div
+                      className={`px-4 py-2.5 text-xs font-bold ${
+                        isLight ? "bg-slate-100 text-slate-800" : "bg-slate-900/60 text-slate-300"
+                      }`}
+                    >
                       Section {sIdx + 1}: {section.title}
                     </div>
-                    <div className="divide-y divide-slate-900/50">
+                    <div
+                      className={`divide-y ${
+                        isLight ? "divide-slate-200" : "divide-slate-900/50"
+                      }`}
+                    >
                       {section.lectures.map((lecture) => {
                         const isCurrent = lecture._id === currentLectureId;
                         const isLecDone = enrollment?.completedLectures.includes(lecture._id);
@@ -2145,22 +2810,30 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                             onClick={() => switchLecture(lecture._id)}
                             className={`px-4 py-2.5 text-xs flex items-start gap-2.5 cursor-pointer ${
                               isCurrent
-                                ? "bg-indigo-950/70 text-white font-bold border-l-2 border-indigo-500"
+                                ? isLight
+                                  ? "bg-indigo-50 text-indigo-950 font-bold border-l-2 border-indigo-600"
+                                  : "bg-indigo-950/70 text-white font-bold border-l-2 border-indigo-500"
+                                : isLight
+                                ? "text-slate-700 hover:bg-slate-100"
                                 : "text-slate-300 hover:bg-slate-800/40"
                             }`}
                           >
                             <div className="pt-0.5 shrink-0">
                               {isLecDone ? (
-                                <CheckCircle className="w-4 h-4 text-emerald-400" />
+                                <CheckCircle className="w-4 h-4 text-emerald-500" />
                               ) : isCurrent ? (
-                                <Play className="w-3.5 h-3.5 fill-indigo-400 text-indigo-400" />
+                                <Play className="w-3.5 h-3.5 fill-indigo-500 text-indigo-500" />
                               ) : (
-                                <Circle className="w-4 h-4 text-slate-600" />
+                                <Circle className={`w-4 h-4 ${isLight ? "text-slate-400" : "text-slate-600"}`} />
                               )}
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="truncate">{lecture.title}</div>
-                              <div className="text-[10px] text-slate-400">
+                              <div
+                                className={`text-[10px] ${
+                                  isLight ? "text-slate-500" : "text-slate-400"
+                                }`}
+                              >
                                 {lecture.durationMinutes} mins
                               </div>
                             </div>
@@ -2177,15 +2850,29 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                               setIsMobileCurriculumOpen(false);
                               onOpenQuiz(q);
                             }}
-                            className="px-4 py-2.5 text-xs flex items-center justify-between bg-amber-950/20 text-amber-200 border-l-2 border-amber-500 cursor-pointer"
+                            className={`px-4 py-2.5 text-xs flex items-center justify-between border-l-2 cursor-pointer ${
+                              isLight
+                                ? "bg-amber-50 text-amber-950 border-amber-600 hover:bg-amber-100"
+                                : "bg-amber-950/20 text-amber-200 border-amber-500 hover:bg-amber-950/40"
+                            }`}
                           >
                             <div className="flex items-center gap-2 truncate">
-                              <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                              <span
+                                className={`px-1.5 py-0.2 rounded text-[9px] font-bold border ${
+                                  isLight
+                                    ? "bg-amber-200 text-amber-900 border-amber-300"
+                                    : "bg-amber-500/20 text-amber-300 border-amber-500/30"
+                                }`}
+                              >
                                 QUIZ
                               </span>
                               <span className="truncate">{q.title}</span>
                             </div>
-                            <span className="text-[10px] text-amber-300 font-mono">
+                            <span
+                              className={`text-[10px] font-mono ${
+                                isLight ? "text-amber-800" : "text-amber-300"
+                              }`}
+                            >
                               {q.totalMarks || 10} pts
                             </span>
                           </div>

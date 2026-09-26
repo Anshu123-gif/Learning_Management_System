@@ -24,8 +24,19 @@ import {
   getQuizAttemptForStudent,
 } from "./server/quizService.js";
 import { fulfillEnrollmentAndPayment } from "./api/payments.js";
-import { createCourseInDb, getCoursesFromDb, getCourseByIdFromDb, updateCourseStatusInDb } from "./api/courses.js";
-import { updateCourseCurriculumInDb } from "./server/curriculumService.js";
+import {
+  createCourseInDb,
+  getCoursesFromDb,
+  getCourseByIdFromDb,
+  updateCourseStatusInDb,
+  deleteCourseFromDb,
+  updateCourseInDb,
+} from "./api/courses.js";
+import {
+  updateCourseCurriculumInDb,
+  deleteSectionFromDb,
+  deleteLectureFromDb,
+} from "./server/curriculumService.js";
 import {
   generateCloudinaryUploadSignature,
   generateCloudinaryPlayUrl,
@@ -879,6 +890,86 @@ async function startServer() {
         return res.status(statusCode).json({
           success: false,
           message: err.message || "Failed to update curriculum in MongoDB.",
+        });
+      }
+    }
+  );
+
+  // PUT /api/courses/:id: Update course metadata (title, price, description, etc.)
+  app.put(
+    "/api/courses/:id",
+    requireAuth,
+    async (req: any, res) => {
+      try {
+        const courseId = req.params.id;
+        const user = req.user;
+        const result = await updateCourseInDb(courseId, req.body, user.userId, user.role);
+        return res.json(result);
+      } catch (err: any) {
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({
+          success: false,
+          message: err.message || "Failed to update course in MongoDB.",
+        });
+      }
+    }
+  );
+
+  // DELETE /api/courses/:id: Delete course with enrollment safety check
+  app.delete(
+    "/api/courses/:id",
+    requireAuth,
+    async (req: any, res) => {
+      try {
+        const courseId = req.params.id;
+        const user = req.user;
+        const result = await deleteCourseFromDb(courseId, user.userId, user.role);
+        return res.json(result);
+      } catch (err: any) {
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({
+          success: false,
+          message: err.message || "Failed to delete course.",
+        });
+      }
+    }
+  );
+
+  // DELETE /api/courses/:id/sections/:sectionId: Delete section from course curriculum
+  app.delete(
+    "/api/courses/:id/sections/:sectionId",
+    requireAuth,
+    async (req: any, res) => {
+      try {
+        const { id: courseId, sectionId } = req.params;
+        const user = req.user;
+        const result = await deleteSectionFromDb(courseId, sectionId, user.userId, user.role);
+        return res.json(result);
+      } catch (err: any) {
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({
+          success: false,
+          message: err.message || "Failed to delete section.",
+        });
+      }
+    }
+  );
+
+  // DELETE /api/courses/:id/sections/:sectionId/lectures/:lectureId: Delete lecture from curriculum section
+  app.delete(
+    "/api/courses/:id/sections/:sectionId/lectures/:lectureId",
+    requireAuth,
+    async (req: any, res) => {
+      try {
+        const { id: courseId, sectionId, lectureId } = req.params;
+        const user = req.user;
+        const result = await deleteLectureFromDb(courseId, sectionId, lectureId, user.userId, user.role);
+        return res.json(result);
+      } catch (err: any) {
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({
+          success: false,
+          message: err.message || "Failed to delete lecture.",
         });
       }
     }

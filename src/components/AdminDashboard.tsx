@@ -12,6 +12,7 @@ import {
   Filter,
   ArrowUpRight,
   TrendingUp,
+  Trash2,
 } from "lucide-react";
 import { useLms } from "../context/LmsContext";
 import { useAuth } from "../context/AuthContext";
@@ -24,7 +25,7 @@ interface AdminDashboardProps {
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onSelectCourse,
 }) => {
-  const { courses, approveCourse, rejectCourse, payments, processRefund } = useLms();
+  const { courses, approveCourse, rejectCourse, deleteCourse, payments, processRefund } = useLms();
   const { currentUser, openAuthModal } = useAuth();
 
   if (!currentUser || currentUser.role !== "admin") {
@@ -54,6 +55,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [activeTab, setActiveTab] = useState<"courses" | "users" | "payments">("courses");
   const [processingCourseId, setProcessingCourseId] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  const [deleteTargetCourse, setDeleteTargetCourse] = useState<Course | null>(null);
+  const [isDeletingCourse, setIsDeletingCourse] = useState(false);
+  const [deleteCourseError, setDeleteCourseError] = useState("");
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTargetCourse) return;
+    setIsDeletingCourse(true);
+    setDeleteCourseError("");
+    try {
+      const res = await deleteCourse(deleteTargetCourse._id);
+      if (!res.success) {
+        setDeleteCourseError(res.message || "Failed to delete course.");
+      } else {
+        setDeleteTargetCourse(null);
+        setActionFeedback({
+          type: "success",
+          message: `Course "${deleteTargetCourse.title}" deleted successfully.`,
+        });
+      }
+    } catch (err: any) {
+      setDeleteCourseError(err.message || "An unexpected error occurred during course deletion.");
+    } finally {
+      setIsDeletingCourse(false);
+    }
+  };
 
   const handleApprove = async (courseId: string) => {
     setProcessingCourseId(courseId);
@@ -374,6 +401,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             >
                               <XCircle className="w-3.5 h-3.5" /> Reject
                             </button>
+                            <button
+                              disabled={processingCourseId === course._id}
+                              onClick={() => {
+                                setDeleteCourseError("");
+                                setDeleteTargetCourse(course);
+                              }}
+                              className="px-2.5 py-1.5 font-semibold rounded-lg text-xs flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 transition-all cursor-pointer"
+                              title="Delete Course"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" /> Delete
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -403,6 +441,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <th className="py-3 px-4">Instructor</th>
                     <th className="py-3 px-4">Enrollments</th>
                     <th className="py-3 px-4">Status</th>
+                    <th className="py-3 px-4 text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -418,6 +457,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         <span className="px-2 py-0.5 rounded-sm bg-emerald-100 text-emerald-800 font-bold uppercase text-[10px]">
                           Approved
                         </span>
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <button
+                          onClick={() => {
+                            setDeleteCourseError("");
+                            setDeleteTargetCourse(c);
+                          }}
+                          className="px-2.5 py-1.5 font-semibold rounded-lg text-xs flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-700 transition-all cursor-pointer ml-auto"
+                          title="Delete Course"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> Delete
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -578,6 +629,64 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Admin Course Delete Confirmation */}
+      {deleteTargetCourse && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-rose-50 flex items-center justify-center shrink-0 border border-rose-100 text-rose-600">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Delete Course?</h3>
+                <p className="text-xs text-slate-500 font-medium truncate max-w-xs">{deleteTargetCourse.title}</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-600 leading-relaxed">
+              Are you sure you want to delete this course? This action cannot be undone.
+            </p>
+
+            {deleteCourseError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{deleteCourseError}</span>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={isDeletingCourse}
+                onClick={() => {
+                  setDeleteTargetCourse(null);
+                  setDeleteCourseError("");
+                }}
+                className="px-4 py-2 border border-slate-200 rounded-xl text-slate-700 hover:bg-slate-50 font-semibold text-xs transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                disabled={isDeletingCourse}
+                onClick={handleConfirmDelete}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 disabled:bg-rose-400 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+              >
+                {isDeletingCourse ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <span>Delete Course</span>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
