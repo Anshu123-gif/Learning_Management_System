@@ -165,7 +165,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         {enrolledCourses.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {enrolledCourses.map((course) => {
-              const enrollment = myEnrollments.find((e) => e.courseId === course._id);
+              const enrollment = myEnrollments.find(
+                (e) => e.courseId === course._id || ((course as any).courseId && e.courseId === (course as any).courseId)
+              );
               const progress = enrollment?.progressPercent || 0;
               const hasCertificate = myCertificates.some((c) => c.courseId === course._id);
 

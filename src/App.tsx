@@ -176,8 +176,13 @@ const MainApp: React.FC = () => {
           course={selectedCourse}
           onClose={() => setSelectedCourse(null)}
           onEnroll={(c) => {
-            setSelectedCourse(null);
-            setPayingCourse(c);
+            if (c.price === 0) {
+              // Free course flow does not open Razorpay PaymentModal
+              setSelectedCourse(null);
+            } else {
+              setSelectedCourse(null);
+              setPayingCourse(c);
+            }
           }}
           onStartLearning={(c) => {
             setSelectedCourse(null);

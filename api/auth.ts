@@ -1,8 +1,9 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { connectMongoDB, isMongoConnected } from "../server/db.js";
+import { connectMongoDB, isMongoConnected, getMongoDiagnostics } from "../server/db.js";
 import { MongoUser } from "../server/models/User.js";
+import { getAllUsersForAdmin, updateUserRoleByAdmin } from "../server/userService.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "sheryians_lms_super_secure_jwt_secret_key_2025";
 
@@ -54,10 +55,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     (pathCombined.includes("verify-otp") || queryPath.includes("verify-otp")) &&
     req.method === "POST";
 
+  const isUsers =
+    (pathCombined.includes("users") || queryPath === "users" || queryPath.endsWith("/users") || searchParams.includes("users")) &&
+    req.method === "GET";
+
+  const isRoleUpdate =
+    (pathCombined.includes("role") || queryPath === "role" || queryPath.endsWith("/role") || searchParams.includes("role")) &&
+    (req.method === "PUT" || req.method === "PATCH");
+
   const isHealth =
     pathCombined.includes("health") ||
     queryPath.includes("health") ||
-    (req.method === "GET" && !isMe);
+    (req.method === "GET" && !isMe && !isUsers);
 
   // 1. SIGNUP: Validates name, email, password -> Checks existing email -> Hashes password with bcrypt -> Saves to MongoDB -> Returns JWT & user
   if (isSignup) {
@@ -391,12 +400,101 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
 
-  // 6. HEALTH CHECK
+  // 6. ADMIN USER MANAGEMENT: Get all users from MongoDB Atlas
+  if (isUsers) {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({
+          success: false,
+          message: "Authentication required. Please provide a valid Bearer token.",
+        });
+      }
+
+      const token = authHeader.split(" ")[1];
+      let decoded: any;
+      try {
+        decoded = jwt.verify(token, JWT_SECRET);
+      } catch {
+        return res.status(401).json({
+          success: false,
+          message: "Invalid or expired session token.",
+        });
+      }
+
+      if (decoded.role !== "admin") {
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden. Administrative privileges required.",
+        });
+      }
+
+      const users = await getAllUsersForAdmin();
+      return res.status(200).json({ success: true, count: users.length, users });
+    } catch (err: any) {
+      console.error("Error fetching users from MongoDB on Vercel:", err);
+      const statusCode = err.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        message: err.message || "Failed to fetch users.",
+      });
+    }
+  }
+
+  // 7. ADMIN ROLE MANAGEMENT: Update a user's role (student | teacher | admin)
+  if (isRoleUpdate) {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({
+          success: false,
+          message: "Authentication required. Please provide a valid Bearer token.",
+        });
+      }
+
+      const token = authHeader.split(" ")[1];
+      let decoded: any;
+      try {
+        decoded = jwt.verify(token, JWT_SECRET);
+      } catch {
+        return res.status(401).json({
+          success: false,
+          message: "Invalid or expired session token.",
+        });
+      }
+
+      if (decoded.role !== "admin") {
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden. Administrative privileges required.",
+        });
+      }
+
+      const targetUserId =
+        (req.query?.userId as string) ||
+        (req.body?.userId as string) ||
+        "";
+      const { role } = req.body || {};
+
+      const result = await updateUserRoleByAdmin(targetUserId, role, decoded.userId);
+      return res.status(200).json(result);
+    } catch (err: any) {
+      console.error("Error updating user role on Vercel:", err);
+      const statusCode = err.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        message: err.message || "Failed to update user role.",
+      });
+    }
+  }
+
+  // 8. HEALTH CHECK
   if (isHealth) {
     return res.status(200).json({
       status: "online",
       service: "EduPulse / CodeHub LMS Vercel API",
       mongoConnected: isMongoConnected(),
+      diagnostics: getMongoDiagnostics(),
       timestamp: new Date().toISOString(),
     });
   }

@@ -228,11 +228,13 @@ const TiltCourseCard: React.FC<{
         <div className="flex items-center justify-between pt-1">
           <div>
             <span className="text-lg font-bold text-white font-mono">
-              ₹{course.price}
+              {course.price === 0 ? "Free" : `₹${course.price}`}
             </span>
-            <span className="text-[11px] text-neutral-500 line-through ml-2">
-              ₹{course.originalPrice}
-            </span>
+            {course.price > 0 && course.originalPrice > course.price && (
+              <span className="text-[11px] text-neutral-500 line-through ml-2">
+                ₹{course.originalPrice}
+              </span>
+            )}
           </div>
 
           <button

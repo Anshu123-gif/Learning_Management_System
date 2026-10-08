@@ -222,9 +222,9 @@ export const CourseCard: React.FC<CourseCardProps> = ({
             <>
               <div className="flex items-baseline gap-1.5">
                 <span className="text-lg font-extrabold text-slate-900">
-                  ₹{course.price.toLocaleString()}
+                  {course.price === 0 ? "Free" : `₹${course.price.toLocaleString()}`}
                 </span>
-                {course.originalPrice > course.price && (
+                {course.price > 0 && course.originalPrice > course.price && (
                   <span className="text-xs text-slate-400 line-through">
                     ₹{course.originalPrice.toLocaleString()}
                   </span>

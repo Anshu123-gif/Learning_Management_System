@@ -2,6 +2,14 @@
   "version": 2,
   "rewrites": [
     {
+      "source": "/api/mongo/users",
+      "destination": "/api/auth?path=users"
+    },
+    {
+      "source": "/api/admin/users/:userId/role",
+      "destination": "/api/auth?path=role&userId=:userId"
+    },
+    {
       "source": "/api/auth/:path*",
       "destination": "/api/auth?path=:path*"
     },

@@ -35,13 +35,16 @@ export const CourseDetailModal: React.FC<CourseDetailModalProps> = ({
   onStartLearning,
   onOpenQuiz,
 }) => {
-  const { isEnrolled, getEnrollmentForCourse, fetchCourseById } = useLms();
+  const { isEnrolled, getEnrollmentForCourse, fetchCourseById, enrollInFreeCourse } = useLms();
   const { isAuthenticated, openAuthModal } = useAuth();
   const [activeCourse, setActiveCourse] = useState<Course | null>(initialCourse);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     sec_1: true,
     sec_2: true,
   });
+  const [isEnrollingFree, setIsEnrollingFree] = useState(false);
+  const [freeEnrollError, setFreeEnrollError] = useState<string | null>(null);
+  const [freeEnrollSuccess, setFreeEnrollSuccess] = useState<string | null>(null);
 
   useEffect(() => {
     setActiveCourse(initialCourse);
@@ -68,6 +71,24 @@ export const CourseDetailModal: React.FC<CourseDetailModalProps> = ({
       ...prev,
       [sectionId]: !prev[sectionId],
     }));
+  };
+
+  const handleFreeEnroll = async () => {
+    if (!isAuthenticated) {
+      openAuthModal("login", () => handleFreeEnroll());
+      return;
+    }
+    setIsEnrollingFree(true);
+    setFreeEnrollError(null);
+    setFreeEnrollSuccess(null);
+
+    const res = await enrollInFreeCourse(course._id);
+    setIsEnrollingFree(false);
+    if (res.success) {
+      setFreeEnrollSuccess(res.message || "Enrolled in free course successfully!");
+    } else {
+      setFreeEnrollError(res.message || "Failed to enroll in free course.");
+    }
   };
 
   const totalLectures = course.sections.flatMap((s) => s.lectures).length;
@@ -169,15 +190,30 @@ export const CourseDetailModal: React.FC<CourseDetailModalProps> = ({
               <div className="space-y-3">
                 <div className="flex items-baseline gap-2">
                   <span className="text-3xl font-extrabold text-slate-900">
-                    ₹{course.price.toLocaleString()}
+                    {course.price === 0 ? "Free" : `₹${course.price.toLocaleString()}`}
                   </span>
-                  <span className="text-sm text-slate-400 line-through">
-                    ₹{course.originalPrice.toLocaleString()}
-                  </span>
+                  {course.originalPrice > course.price && (
+                    <span className="text-sm text-slate-400 line-through">
+                      ₹{course.originalPrice.toLocaleString()}
+                    </span>
+                  )}
                   <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-sm">
-                    70% OFF
+                    {course.price === 0 ? "100% FREE" : "70% OFF"}
                   </span>
                 </div>
+
+                {freeEnrollSuccess && (
+                  <div className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 p-2.5 rounded-lg flex items-start gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                    <span>{freeEnrollSuccess}</span>
+                  </div>
+                )}
+
+                {freeEnrollError && (
+                  <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 p-2.5 rounded-lg">
+                    {freeEnrollError}
+                  </div>
+                )}
 
                 {enrolled ? (
                   <div className="space-y-2">
@@ -197,6 +233,29 @@ export const CourseDetailModal: React.FC<CourseDetailModalProps> = ({
                     >
                       <PlayCircle className="w-4 h-4" /> Continue to Classroom
                     </button>
+                  </div>
+                ) : course.price === 0 ? (
+                  <div className="space-y-2">
+                    <button
+                      onClick={handleFreeEnroll}
+                      disabled={isEnrollingFree}
+                      className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-bold rounded-xl text-sm transition-all shadow-md shadow-emerald-600/30 flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      {isEnrollingFree ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          <span>Enrolling for Free...</span>
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>Enroll for Free</span>
+                        </>
+                      )}
+                    </button>
+                    <p className="text-[11px] text-center text-slate-500">
+                      Free Lifetime Access • No Payment Required
+                    </p>
                   </div>
                 ) : (
                   <div className="space-y-2">

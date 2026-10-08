@@ -52,6 +52,12 @@ interface LmsContextType {
   getEnrollmentForCourse: (courseId: string) => Enrollment | undefined;
   isEnrolled: (courseId: string) => boolean;
   enrollInCourse: (courseId: string, paymentDetails?: { razorpayOrderId: string; razorpayPaymentId: string; amount: number }) => void;
+  enrollInFreeCourse: (courseId: string) => Promise<{
+    success: boolean;
+    alreadyEnrolled?: boolean;
+    message?: string;
+    enrollment?: Enrollment;
+  }>;
   markLectureComplete: (courseId: string, lectureId: string) => void;
   saveVideoProgress: (courseId: string, lectureId: string, seconds: number) => void;
   
@@ -810,6 +816,107 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
+  const enrollInFreeCourse = async (
+    courseId: string
+  ): Promise<{
+    success: boolean;
+    alreadyEnrolled?: boolean;
+    message?: string;
+    enrollment?: Enrollment;
+  }> => {
+    if (!currentUser) {
+      return {
+        success: false,
+        message: "Authentication required. Please log in to enroll.",
+      };
+    }
+
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
+      const res = await fetch(`/api/courses/${courseId}/enroll-free`, {
+        method: "POST",
+        headers,
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok && data.success) {
+        const rawEnrollment = data.enrollment;
+        const normalizedEnrollment: Enrollment = {
+          _id: rawEnrollment?.enrollmentId || rawEnrollment?._id || `enr_${Date.now()}`,
+          studentId: rawEnrollment?.studentId || currentUser._id,
+          courseId: data.courseId || courseId,
+          progressPercent: rawEnrollment?.progressPercent || 0,
+          completedLectures: rawEnrollment?.completedLectures || [],
+          lastWatchedLectureId: rawEnrollment?.lastWatchedLectureId || "",
+          lastWatchedPositionSeconds: rawEnrollment?.lastWatchedPositionSeconds || 0,
+          paymentId: rawEnrollment?.paymentId || "free_enrollment",
+          enrolledAt: rawEnrollment?.enrolledAt || new Date().toISOString(),
+          certificateIssued: rawEnrollment?.certificateIssued || false,
+        };
+
+        // Add or update in local enrollments state
+        setEnrollments((prev) => {
+          const exists = prev.some(
+            (e) =>
+              (e.courseId === normalizedEnrollment.courseId || e.courseId === courseId) &&
+              e.studentId === currentUser._id
+          );
+          if (exists) {
+            return prev.map((e) =>
+              (e.courseId === normalizedEnrollment.courseId || e.courseId === courseId) &&
+              e.studentId === currentUser._id
+                ? { ...e, ...normalizedEnrollment }
+                : e
+            );
+          }
+          return [...prev, normalizedEnrollment];
+        });
+
+        // Update course enrolled count if newly enrolled
+        if (!data.alreadyEnrolled) {
+          setCourses((prev) =>
+            prev.map((c) =>
+              c._id === courseId || (c as any).courseId === courseId
+                ? { ...c, studentsEnrolled: (c.studentsEnrolled || 0) + 1 }
+                : c
+            )
+          );
+        }
+
+        // Also refresh from MongoDB in the background to ensure complete sync
+        if (currentUser._id) {
+          fetchStudentEnrollments(currentUser._id);
+        }
+
+        return {
+          success: true,
+          alreadyEnrolled: data.alreadyEnrolled,
+          message: data.message || "Enrolled in free course successfully!",
+          enrollment: normalizedEnrollment,
+        };
+      } else {
+        return {
+          success: false,
+          message: data.message || `Enrollment failed with status ${res.status}.`,
+        };
+      }
+    } catch (err: any) {
+      console.error("Free enrollment network error:", err);
+      return {
+        success: false,
+        message: err.message || "Network error. Failed to reach enrollment service.",
+      };
+    }
+  };
+
   const markLectureComplete = (courseId: string, lectureId: string) => {
     if (!currentUser) return;
     const course = getCourseById(courseId);
@@ -1438,6 +1545,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         getEnrollmentForCourse,
         isEnrolled,
         enrollInCourse,
+        enrollInFreeCourse,
         markLectureComplete,
         saveVideoProgress,
         getQuizForCourse,

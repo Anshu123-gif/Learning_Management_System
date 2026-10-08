@@ -8,7 +8,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import Razorpay from "razorpay";
 import crypto from "crypto";
-import { connectMongoDB, isMongoConnected } from "./server/db.js";
+import { connectMongoDB, isMongoConnected, getMongoDiagnostics } from "./server/db.js";
 import { MongoUser } from "./server/models/User.js";
 import { MongoPayment } from "./server/models/Payment.js";
 import { MongoEnrollment } from "./server/models/Enrollment.js";
@@ -23,6 +23,7 @@ import {
   submitQuizAttemptInDb,
   getQuizAttemptForStudent,
 } from "./server/quizService.js";
+import { getAllUsersForAdmin, updateUserRoleByAdmin, ensureDefaultAdminAccount } from "./server/userService.js";
 import { fulfillEnrollmentAndPayment } from "./api/payments.js";
 import {
   createCourseInDb,
@@ -31,6 +32,7 @@ import {
   updateCourseStatusInDb,
   deleteCourseFromDb,
   updateCourseInDb,
+  enrollFreeCourseInDb,
 } from "./api/courses.js";
 import {
   updateCourseCurriculumInDb,
@@ -85,8 +87,11 @@ async function startServer() {
 
   // Attempt connection to MongoDB Atlas
   connectMongoDB()
-    .then((ok) => {
-      if (ok) console.log("🚀 MongoDB Atlas is ready to receive data!");
+    .then(async (ok) => {
+      if (ok) {
+        console.log("🚀 MongoDB Atlas is ready to receive data!");
+        await ensureDefaultAdminAccount();
+      }
     })
     .catch((err) => {
       console.warn("Initial MongoDB connection attempt failed:", err);
@@ -122,6 +127,7 @@ async function startServer() {
       mongoConnected: isMongoConnected(),
       mongoConfigured: Boolean(process.env.MONGODB_URI),
       aiConfigured: Boolean(process.env.GEMINI_API_KEY),
+      diagnostics: getMongoDiagnostics(),
       timestamp: new Date().toISOString(),
     });
   });
@@ -603,24 +609,54 @@ async function startServer() {
     res.json({
       connected: isMongoConnected(),
       configured: Boolean(process.env.MONGODB_URI),
+      diagnostics: getMongoDiagnostics(),
     });
   });
 
-  // Get all users from MongoDB (Admin only)
+  // Get all users from MongoDB (Admin only - password omitted)
   app.get("/api/mongo/users", requireAuth, requireRole("admin"), async (req, res) => {
     try {
-      const connected = await connectMongoDB();
-      if (!connected) {
-        return res.status(503).json({ success: false, message: "MongoDB not connected or MONGODB_URI missing." });
-      }
-
-      const users = await MongoUser.find().lean();
-      return res.json({ success: true, users });
+      const users = await getAllUsersForAdmin();
+      return res.json({ success: true, count: users.length, users });
     } catch (err: any) {
       console.error("Error fetching users from MongoDB:", err);
-      return res.status(500).json({ success: false, message: err.message });
+      const statusCode = err.statusCode || 500;
+      return res.status(statusCode).json({ success: false, message: err.message });
     }
   });
+
+  // PUT & PATCH /api/admin/users/:userId/role: Role Management by Admin
+  const handleUpdateUserRole = async (req: any, res: any) => {
+    try {
+      const { userId } = req.params;
+      const { role } = req.body;
+      const requester = req.user;
+
+      const result = await updateUserRoleByAdmin(userId, role, requester?.userId);
+      return res.status(200).json(result);
+    } catch (err: any) {
+      console.error("Error updating user role in MongoDB:", err);
+      const statusCode = err.statusCode || 500;
+      return res.status(statusCode).json({
+        success: false,
+        message: err.message || "Failed to update user role.",
+      });
+    }
+  };
+
+  app.put(
+    "/api/admin/users/:userId/role",
+    requireAuth,
+    requireRole("admin"),
+    handleUpdateUserRole
+  );
+
+  app.patch(
+    "/api/admin/users/:userId/role",
+    requireAuth,
+    requireRole("admin"),
+    handleUpdateUserRole
+  );
 
   // Register / Upsert user in MongoDB (Enforces role: 'student' on public registration)
   app.post("/api/mongo/users/register", async (req, res) => {
@@ -828,6 +864,28 @@ async function startServer() {
       });
     }
   });
+
+  // POST /api/courses/:id/enroll-free: Dedicated authenticated endpoint for free (₹0) course enrollment
+  // Never trusts frontend price; authoritatively verifies course price is 0 and status is approved
+  app.post(
+    "/api/courses/:id/enroll-free",
+    requireAuth,
+    requireRole("student"),
+    async (req: any, res) => {
+      try {
+        const courseId = req.params.id;
+        const user = req.user;
+        const result = await enrollFreeCourseInDb(courseId, user.userId, user.role);
+        return res.status(200).json(result);
+      } catch (err: any) {
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({
+          success: false,
+          message: err.message || "Failed to enroll in free course.",
+        });
+      }
+    }
+  );
 
   // PATCH /api/courses/:id/status: Protected course approval/rejection endpoint
   // Role: Only "admin" can call this endpoint

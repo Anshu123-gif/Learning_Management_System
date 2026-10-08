@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   ShieldCheck,
   CheckCircle,
@@ -17,6 +17,20 @@ import {
 import { useLms } from "../context/LmsContext";
 import { useAuth } from "../context/AuthContext";
 import { Course } from "../types";
+
+export interface AdminManagedUser {
+  _id: string;
+  userId: string;
+  name: string;
+  email: string;
+  role: "student" | "teacher" | "admin";
+  phone: string;
+  avatar: string;
+  bio: string;
+  enrolledCourses: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
 
 interface AdminDashboardProps {
   onSelectCourse: (course: Course) => void;
@@ -123,45 +137,129 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const totalPlatformRevenue = payments.reduce((acc, p) => acc + (p.status === "captured" ? p.amount : 0), 0);
   const totalStudentsCount = courses.reduce((acc, c) => acc + c.studentsEnrolled, 0);
 
-  // Simulated users list for admin user management
-  const usersList = [
-    {
-      _id: "usr_student_1",
-      name: "Rahul Sharma",
-      email: "rahul.sharma@college.edu",
-      role: "student",
-      joinedAt: "2025-01-10",
-      status: "active",
-      enrolledCount: 3,
-    },
-    {
-      _id: "usr_teacher_1",
-      name: "Prof. Priya Swaminathan",
-      email: "priya.swaminathan@edupulse.org",
-      role: "teacher",
-      joinedAt: "2024-11-15",
-      status: "active",
-      enrolledCount: 2840,
-    },
-    {
-      _id: "usr_teacher_2",
-      name: "Aditya Roy",
-      email: "aditya.roy@edupulse.org",
-      role: "teacher",
-      joinedAt: "2024-12-01",
-      status: "active",
-      enrolledCount: 4120,
-    },
-    {
-      _id: "usr_admin_1",
-      name: "Dean Vikram Mehta",
-      email: "admin@edupulse.org",
-      role: "admin",
-      joinedAt: "2024-09-01",
-      status: "active",
-      enrolledCount: 0,
-    },
-  ];
+  // Live MongoDB User Management State
+  const [mongoUsers, setMongoUsers] = useState<AdminManagedUser[]>([]);
+  const [isLoadingUsers, setIsLoadingUsers] = useState<boolean>(false);
+  const [usersError, setUsersError] = useState<string | null>(null);
+  const [userSearchTerm, setUserSearchTerm] = useState<string>("");
+  const [roleFilter, setRoleFilter] = useState<"all" | "student" | "teacher" | "admin">("all");
+  const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
+  const [userRoleFeedback, setUserRoleFeedback] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+
+  // Fetch real users from MongoDB Atlas (Admin-protected endpoint GET /api/mongo/users)
+  const fetchUsers = async () => {
+    setIsLoadingUsers(true);
+    setUsersError(null);
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = {
+        Accept: "application/json",
+      };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
+      const res = await fetch("/api/mongo/users", { headers });
+      const data = await res.json();
+
+      if (res.ok && data.success && Array.isArray(data.users)) {
+        setMongoUsers(data.users);
+      } else {
+        setUsersError(data.message || `Failed to fetch users (HTTP ${res.status}).`);
+      }
+    } catch (err: any) {
+      setUsersError(err.message || "Failed to connect to MongoDB user management service.");
+    } finally {
+      setIsLoadingUsers(false);
+    }
+  };
+
+  useEffect(() => {
+    if (currentUser?.role === "admin") {
+      fetchUsers();
+    }
+  }, [currentUser]);
+
+  // Handle Role Assignment (Admin-protected endpoint PUT /api/admin/users/:userId/role)
+  const handleRoleChange = async (
+    targetUserId: string,
+    newRole: "student" | "teacher" | "admin",
+    currentRole: string
+  ) => {
+    if (newRole === currentRole) return;
+
+    if (currentRole === "admin" && newRole !== "admin") {
+      const confirmChange = window.confirm(
+        `Are you sure you want to change this administrator account's role to "${newRole}"? Note: The operation will be rejected if this is the only remaining administrator account.`
+      );
+      if (!confirmChange) return;
+    }
+
+    setUpdatingUserId(targetUserId);
+    setUserRoleFeedback(null);
+
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(targetUserId)}/role`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ role: newRole }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        setUserRoleFeedback({
+          type: "success",
+          message: data.message || `Role updated to "${newRole}" successfully.`,
+        });
+        // Optimistically update the user's role in local table state without requiring page reload
+        setMongoUsers((prev) =>
+          prev.map((u) =>
+            u.userId === targetUserId || u._id === targetUserId
+              ? { ...u, role: newRole }
+              : u
+          )
+        );
+      } else {
+        setUserRoleFeedback({
+          type: "error",
+          message: data.message || `Failed to update user role (HTTP ${res.status}).`,
+        });
+      }
+    } catch (err: any) {
+      setUserRoleFeedback({
+        type: "error",
+        message: err.message || "Network error updating user role.",
+      });
+    } finally {
+      setUpdatingUserId(null);
+    }
+  };
+
+  // Filtered live users based on search term and role filter
+  const filteredUsers = mongoUsers.filter((u) => {
+    const matchesRole = roleFilter === "all" || u.role === roleFilter;
+    if (!matchesRole) return false;
+    if (!userSearchTerm.trim()) return true;
+    const q = userSearchTerm.toLowerCase().trim();
+    return (
+      (u.name && u.name.toLowerCase().includes(q)) ||
+      (u.email && u.email.toLowerCase().includes(q)) ||
+      (u.userId && u.userId.toLowerCase().includes(q))
+    );
+  });
 
   return (
     <div className="space-y-8 pb-16">
@@ -242,9 +340,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <Users className="w-4 h-4 text-purple-600" />
           </div>
           <div className="text-2xl font-extrabold text-slate-900">
-            {totalStudentsCount.toLocaleString()}
+            {mongoUsers.length > 0
+              ? mongoUsers.filter((u) => u.role === "student").length.toLocaleString()
+              : totalStudentsCount.toLocaleString()}
           </div>
-          <div className="text-[11px] text-slate-400">Enrolled accounts</div>
+          <div className="text-[11px] text-slate-400">
+            {mongoUsers.length > 0 ? "Registered student accounts" : "Enrolled accounts"}
+          </div>
         </div>
       </div>
 
@@ -271,7 +373,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           }`}
         >
           <Users className="w-4 h-4" />
-          <span>User Role Administration</span>
+          <span>User Role Administration ({mongoUsers.length > 0 ? mongoUsers.length : "Live"})</span>
         </button>
 
         <button
@@ -482,68 +584,261 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       {/* Tab: User Administration */}
       {activeTab === "users" && (
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-2xs p-5 space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h2 className="text-base font-bold text-slate-900">User Access Management</h2>
-              <p className="text-xs text-slate-500">
-                Manage roles and system permissions across Students, Instructors, and Administrators
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-slate-900">User Access Management</h2>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                  MongoDB Atlas
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Manage roles and system permissions across registered students, instructors, and administrators
               </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={fetchUsers}
+                disabled={isLoadingUsers}
+                className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-semibold rounded-lg text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Reload users from MongoDB Atlas"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingUsers ? "animate-spin text-indigo-600" : ""}`} />
+                <span>{isLoadingUsers ? "Syncing..." : "Refresh"}</span>
+              </button>
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 text-slate-500 font-semibold border-y border-slate-200">
-                <tr>
-                  <th className="py-3 px-4">User</th>
-                  <th className="py-3 px-4">Role</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4">Joined Date</th>
-                  <th className="py-3 px-4">Activity</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {usersList.map((usr) => (
-                  <tr key={usr._id} className="hover:bg-slate-50/70">
-                    <td className="py-3 px-4">
-                      <div className="font-bold text-slate-900">{usr.name}</div>
-                      <div className="text-[11px] text-slate-500 font-mono">{usr.email}</div>
-                    </td>
+          {/* User Role Update Action Feedback */}
+          {userRoleFeedback && (
+            <div
+              className={`p-3 rounded-xl text-xs flex items-center justify-between ${
+                userRoleFeedback.type === "success"
+                  ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                  : "bg-rose-50 text-rose-800 border border-rose-200"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                {userRoleFeedback.type === "success" ? (
+                  <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                )}
+                <span>{userRoleFeedback.message}</span>
+              </div>
+              <button
+                onClick={() => setUserRoleFeedback(null)}
+                className="text-slate-400 hover:text-slate-600 ml-3 font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+          )}
 
-                    <td className="py-3 px-4">
-                      <span
-                        className={`px-2.5 py-0.5 rounded-full font-bold uppercase text-[10px] ${
-                          usr.role === "admin"
-                            ? "bg-purple-100 text-purple-800"
-                            : usr.role === "teacher"
-                            ? "bg-indigo-100 text-indigo-800"
-                            : "bg-slate-100 text-slate-800"
-                        }`}
-                      >
-                        {usr.role}
-                      </span>
-                    </td>
+          {/* Search & Filter Bar */}
+          <div className="flex flex-col sm:flex-row gap-3 pt-1">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <input
+                type="text"
+                value={userSearchTerm}
+                onChange={(e) => setUserSearchTerm(e.target.value)}
+                placeholder="Search by name, email, or user ID..."
+                className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+              />
+              {userSearchTerm && (
+                <button
+                  onClick={() => setUserSearchTerm("")}
+                  className="absolute right-3 top-2.5 text-xs text-slate-400 hover:text-slate-600 cursor-pointer"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
 
-                    <td className="py-3 px-4">
-                      <span className="text-emerald-600 font-semibold flex items-center gap-1 text-[11px]">
-                        <CheckCircle className="w-3 h-3" /> Active
-                      </span>
-                    </td>
-
-                    <td className="py-3 px-4 text-slate-500">{usr.joinedAt}</td>
-
-                    <td className="py-3 px-4 text-slate-600">
-                      {usr.role === "teacher"
-                        ? `${usr.enrolledCount} total students taught`
-                        : usr.role === "student"
-                        ? `${usr.enrolledCount} courses enrolled`
-                        : "Full Governance"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 font-medium">
+                <Filter className="w-3.5 h-3.5 text-slate-400" />
+                <span>Role:</span>
+                <select
+                  value={roleFilter}
+                  onChange={(e) => setRoleFilter(e.target.value as any)}
+                  className="bg-transparent font-semibold text-slate-800 focus:outline-none cursor-pointer text-xs"
+                >
+                  <option value="all">All Roles ({mongoUsers.length})</option>
+                  <option value="student">Students ({mongoUsers.filter((u) => u.role === "student").length})</option>
+                  <option value="teacher">Teachers ({mongoUsers.filter((u) => u.role === "teacher").length})</option>
+                  <option value="admin">Admins ({mongoUsers.filter((u) => u.role === "admin").length})</option>
+                </select>
+              </div>
+            </div>
           </div>
+
+          {/* Error State */}
+          {usersError && (
+            <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{usersError}</span>
+              </div>
+              <button
+                onClick={fetchUsers}
+                className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-xs shrink-0 self-start sm:self-auto cursor-pointer"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
+          {/* Loading State */}
+          {isLoadingUsers ? (
+            <div className="py-12 flex flex-col items-center justify-center space-y-3 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+              <RefreshCw className="w-6 h-6 animate-spin text-indigo-600" />
+              <p className="text-xs font-semibold text-slate-600">Loading live user records from MongoDB Atlas...</p>
+            </div>
+          ) : filteredUsers.length === 0 ? (
+            /* Empty State */
+            <div className="text-center py-12 px-4 bg-slate-50 rounded-xl border border-dashed border-slate-200 space-y-2">
+              <Users className="w-8 h-8 text-slate-300 mx-auto" />
+              <h3 className="text-xs font-bold text-slate-700">No matching users found</h3>
+              <p className="text-[11px] text-slate-500 max-w-sm mx-auto">
+                {userSearchTerm || roleFilter !== "all"
+                  ? "No users match your current filter. Try clearing your search query or role filter."
+                  : "No user documents found in the MongoDB Atlas database collection."}
+              </p>
+              {(userSearchTerm || roleFilter !== "all") && (
+                <button
+                  onClick={() => {
+                    setUserSearchTerm("");
+                    setRoleFilter("all");
+                  }}
+                  className="mt-2 text-xs font-semibold text-indigo-600 hover:text-indigo-700 hover:underline cursor-pointer"
+                >
+                  Clear search filters
+                </button>
+              )}
+            </div>
+          ) : (
+            /* Live MongoDB User Table */
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 text-slate-500 font-semibold border-y border-slate-200">
+                  <tr>
+                    <th className="py-3 px-4">User</th>
+                    <th className="py-3 px-4">Current Role</th>
+                    <th className="py-3 px-4">Account ID</th>
+                    <th className="py-3 px-4">Enrolled Courses</th>
+                    <th className="py-3 px-4">Join Date</th>
+                    <th className="py-3 px-4 text-right">Assign Role</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredUsers.map((usr) => (
+                    <tr key={usr.userId || usr._id} className="hover:bg-slate-50/70 transition-colors">
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={
+                              usr.avatar ||
+                              "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80"
+                            }
+                            alt={usr.name}
+                            className="w-8 h-8 rounded-full object-cover border border-slate-200 shrink-0"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src =
+                                "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80";
+                            }}
+                          />
+                          <div>
+                            <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                              <span>{usr.name}</span>
+                              {currentUser?.userId === usr.userId && (
+                                <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                                  You
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-slate-500 font-mono">{usr.email}</div>
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="py-3 px-4">
+                        <span
+                          className={`px-2.5 py-0.5 rounded-full font-bold uppercase text-[10px] inline-flex items-center gap-1 ${
+                            usr.role === "admin"
+                              ? "bg-purple-100 text-purple-800"
+                              : usr.role === "teacher"
+                              ? "bg-indigo-100 text-indigo-800"
+                              : "bg-slate-100 text-slate-800"
+                          }`}
+                        >
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              usr.role === "admin"
+                                ? "bg-purple-500"
+                                : usr.role === "teacher"
+                                ? "bg-indigo-500"
+                                : "bg-slate-400"
+                            }`}
+                          />
+                          {usr.role}
+                        </span>
+                      </td>
+
+                      <td className="py-3 px-4 font-mono text-[11px] text-slate-500">
+                        <span className="px-1.5 py-0.5 bg-slate-100 rounded text-slate-700">
+                          {usr.userId || usr._id}
+                        </span>
+                      </td>
+
+                      <td className="py-3 px-4 text-slate-600 font-medium">
+                        {usr.role === "teacher"
+                          ? "Faculty Account"
+                          : usr.role === "admin"
+                          ? "Governance Account"
+                          : `${Array.isArray(usr.enrolledCourses) ? usr.enrolledCourses.length : 0} enrolled`}
+                      </td>
+
+                      <td className="py-3 px-4 text-slate-500 text-[11px]">
+                        {usr.createdAt || "Recently"}
+                      </td>
+
+                      <td className="py-3 px-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <select
+                            disabled={updatingUserId === (usr.userId || usr._id)}
+                            value={usr.role}
+                            onChange={(e) =>
+                              handleRoleChange(
+                                usr.userId || usr._id,
+                                e.target.value as "student" | "teacher" | "admin",
+                                usr.role
+                              )
+                            }
+                            className={`px-2.5 py-1 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${
+                              updatingUserId === (usr.userId || usr._id)
+                                ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
+                                : "bg-white text-slate-700 border-slate-300 hover:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            }`}
+                          >
+                            <option value="student">Student</option>
+                            <option value="teacher">Teacher</option>
+                            <option value="admin">Admin</option>
+                          </select>
+
+                          {updatingUserId === (usr.userId || usr._id) && (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-600 shrink-0" />
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 

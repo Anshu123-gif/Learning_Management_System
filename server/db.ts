@@ -16,87 +16,87 @@ if (!globalThis.mongooseCache) {
   globalThis.mongooseCache = cached;
 }
 
-let lastPingTime = 0;
-const PING_INTERVAL_MS = 10000;
-
 const DEFAULT_MONGODB_URI = "mongodb+srv://san414706_db_user:sYHC0uMqvY0WQOTy@cluster0.w2yjysh.mongodb.net/sheryians_lms?retryWrites=true&w=majority&appName=Cluster0";
+
+// Diagnostic metrics
+let lastConnectDurationMs = 0;
+let lastConnectionError: string | null = null;
+let lastConnectedTimestamp: string | null = null;
 
 const MONGO_OPTIONS: mongoose.ConnectOptions = {
   maxPoolSize: 10,
   minPoolSize: 0,
-  serverSelectionTimeoutMS: 4000,
-  socketTimeoutMS: 8000,
-  maxIdleTimeMS: 10000,
+  serverSelectionTimeoutMS: 10000,
+  socketTimeoutMS: 30000,
+  connectTimeoutMS: 10000,
+  family: 4, // Force IPv4 to prevent IPv6 TLS handshake alert 80 failures with Atlas
   retryWrites: true,
   w: "majority",
+  autoIndex: false,
 };
 
-export async function connectMongoDB(retries = 2, delayMs = 1000): Promise<boolean> {
+export async function connectMongoDB(retries = 2, delayMs = 1500): Promise<boolean> {
   const uri = process.env.MONGODB_URI || DEFAULT_MONGODB_URI;
   if (!uri) {
     console.error("❌ MongoDB connection failed: No connection URI provided.");
+    lastConnectionError = "No connection URI provided";
     return false;
   }
 
-  // 1. If connection is already established and healthy
+  // 1. If connection is already established and healthy (readyState === 1: connected)
   if (mongoose.connection.readyState === 1) {
     if (!cached.conn) {
       cached.conn = mongoose;
     }
+    return true;
+  }
 
-    // Run lightweight ping only if connection has been idle for more than PING_INTERVAL_MS
-    if (Date.now() - lastPingTime > PING_INTERVAL_MS && mongoose.connection.db) {
-      try {
-        await mongoose.connection.db.admin().ping();
-        lastPingTime = Date.now();
-        return true;
-      } catch (pingError: any) {
-        console.warn("⚠️ Cached MongoDB connection ping failed, discarding stale connection:", pingError?.message || pingError);
-        try {
-          await mongoose.disconnect();
-        } catch {
-          // ignore disconnect error
-        }
-        cached.conn = null;
-        cached.promise = null;
-      }
-    } else {
+  // 2. If already in the process of connecting (readyState === 2: connecting), await existing promise
+  if (mongoose.connection.readyState === 2 && cached.promise) {
+    try {
+      cached.conn = await cached.promise;
       return true;
+    } catch {
+      // Fall through to retry logic
     }
   }
 
-  // 2. If in stale / disconnected state (not connecting and not connected), clear stale references
-  if (mongoose.connection.readyState !== 1 && mongoose.connection.readyState !== 2) {
+  // 3. Clear stale promise if disconnected (readyState === 0)
+  if (mongoose.connection.readyState === 0) {
     cached.conn = null;
     cached.promise = null;
   }
 
-  // 3. Connect with reduced retry loop (1-2 retries) and connection promise reuse
+  // 4. Retry loop with promise reuse, IPv4 enforcement, and exponential backoff
   for (let attempt = 1; attempt <= retries; attempt++) {
+    const startTime = Date.now();
     try {
       if (!cached.promise) {
         cached.promise = mongoose.connect(uri, MONGO_OPTIONS);
       }
       cached.conn = await cached.promise;
-      lastPingTime = Date.now();
-      console.log("✅ Successfully connected to MongoDB Atlas!");
+      lastConnectDurationMs = Date.now() - startTime;
+      lastConnectedTimestamp = new Date().toISOString();
+      lastConnectionError = null;
+      console.log(`✅ Successfully connected to MongoDB Atlas in ${lastConnectDurationMs}ms!`);
       return true;
     } catch (error: any) {
       cached.promise = null;
       cached.conn = null;
-      try {
-        await mongoose.disconnect();
-      } catch {
-        // ignore disconnect error
-      }
+      lastConnectDurationMs = Date.now() - startTime;
 
       const sanitizedMsg = error?.message
         ? String(error.message).replace(/\/\/([^:]+):([^@]+)@/, "//$1:****@")
         : "Unknown connection error";
-      console.error(`❌ MongoDB Atlas connection error (attempt ${attempt}/${retries}):`, sanitizedMsg);
+      lastConnectionError = sanitizedMsg;
+
+      console.error(
+        `❌ MongoDB Atlas connection error (attempt ${attempt}/${retries}, duration: ${lastConnectDurationMs}ms, readyState: ${mongoose.connection.readyState}):`,
+        sanitizedMsg
+      );
 
       if (attempt < retries) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        await new Promise((resolve) => setTimeout(resolve, delayMs * attempt));
       }
     }
   }
@@ -106,5 +106,28 @@ export async function connectMongoDB(retries = 2, delayMs = 1000): Promise<boole
 
 export function isMongoConnected(): boolean {
   return mongoose.connection.readyState === 1;
+}
+
+export function getMongoDiagnostics() {
+  const stateNames: Record<number, string> = {
+    0: "disconnected",
+    1: "connected",
+    2: "connecting",
+    3: "disconnecting",
+    99: "uninitialized",
+  };
+
+  return {
+    uriPresent: Boolean(process.env.MONGODB_URI || DEFAULT_MONGODB_URI),
+    readyState: mongoose.connection.readyState,
+    readyStateDescription: stateNames[mongoose.connection.readyState] || "unknown",
+    cachedConnExists: Boolean(cached?.conn),
+    cachedPromiseExists: Boolean(cached?.promise),
+    lastConnectDurationMs,
+    lastConnectedTimestamp,
+    lastConnectionError,
+    activeHost: mongoose.connection.host || null,
+    dbName: mongoose.connection.name || null,
+  };
 }
 

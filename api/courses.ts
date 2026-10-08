@@ -656,6 +656,160 @@ export async function getCourseByIdFromDb(courseId: string) {
 }
 
 /**
+ * Shared service helper for enrolling a student into a free (₹0) course.
+ * Authoritative:
+ * 1. Checks that caller is authenticated and exists in MongoUser.
+ * 2. Fetches course from MongoDB and verifies status === 'approved'.
+ * 3. Strictly verifies on the server that price === 0 (rejects paid courses).
+ * 4. Idempotently checks if student is already enrolled (returns safe response).
+ * 5. Creates MongoEnrollment, updates User.enrolledCourses, and increments studentsEnrolled.
+ */
+export async function enrollFreeCourseInDb(
+  courseId: string,
+  authenticatedUserId: string,
+  authenticatedUserRole?: string
+) {
+  const connected = await connectMongoDB();
+  if (!connected) {
+    const err: any = new Error("Database service unavailable.");
+    err.statusCode = 503;
+    throw err;
+  }
+
+  if (!courseId || typeof courseId !== "string" || !courseId.trim()) {
+    const err: any = new Error("Course ID is required.");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  if (!authenticatedUserId || typeof authenticatedUserId !== "string") {
+    const err: any = new Error("Authentication required. Please log in to enroll.");
+    err.statusCode = 401;
+    throw err;
+  }
+
+  // Verify that only students can enroll
+  if (authenticatedUserRole && authenticatedUserRole !== "student") {
+    const err: any = new Error("Forbidden. Only students can enroll in courses.");
+    err.statusCode = 403;
+    throw err;
+  }
+
+  // 1. Verify user exists in MongoDB
+  let userDoc = await MongoUser.findOne({ userId: authenticatedUserId });
+  if (!userDoc && mongoose.Types.ObjectId.isValid(authenticatedUserId)) {
+    userDoc = await MongoUser.findById(authenticatedUserId);
+  }
+
+  if (!userDoc) {
+    const err: any = new Error("User account not found. Please log in again.");
+    err.statusCode = 404;
+    throw err;
+  }
+
+  if (userDoc.role && userDoc.role !== "student") {
+    const err: any = new Error("Forbidden. Only students can enroll in courses.");
+    err.statusCode = 403;
+    throw err;
+  }
+
+  // 2. Fetch course from MongoDB
+  let course = await MongoCourse.findOne({ courseId });
+  if (!course && mongoose.Types.ObjectId.isValid(courseId)) {
+    course = await MongoCourse.findById(courseId);
+  }
+
+  if (!course) {
+    const err: any = new Error(`Course with ID "${courseId}" not found in database.`);
+    err.statusCode = 404;
+    throw err;
+  }
+
+  // 3. Verify course is approved and available for enrollment
+  if (course.status !== "approved") {
+    const err: any = new Error("This course is currently undergoing review and is not available for enrollment.");
+    err.statusCode = 403;
+    throw err;
+  }
+
+  // 4. Server-Side Price Verification: MUST be genuinely free (price === 0)
+  const actualPrice = Number(course.price);
+  if (isNaN(actualPrice) || actualPrice > 0) {
+    const err: any = new Error(
+      `This course is a paid course (₹${actualPrice}). Free enrollment is not permitted. Please complete payment through Razorpay.`
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const authoritativeCourseId = String(course.courseId || course._id);
+  const candidateCourseIds: string[] = [authoritativeCourseId, String(course.courseId || ""), String(course._id), courseId].filter(Boolean).map(String);
+
+  // 5. Idempotency check: Is student already enrolled?
+  const existingEnrollment = await MongoEnrollment.findOne({
+    courseId: { $in: candidateCourseIds },
+    studentId: userDoc.userId,
+  });
+
+  if (existingEnrollment) {
+    return {
+      success: true,
+      alreadyEnrolled: true,
+      message: "You are already enrolled in this course.",
+      enrollment: existingEnrollment.toObject ? existingEnrollment.toObject() : existingEnrollment,
+      courseId: authoritativeCourseId,
+      courseTitle: course.title,
+    };
+  }
+
+  // 6. Create MongoEnrollment
+  const enrollmentId = `enr_free_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const firstLectureId = course.sections?.[0]?.lectures?.[0]?._id || "";
+
+  const newEnrollment = new MongoEnrollment({
+    enrollmentId,
+    studentId: userDoc.userId,
+    studentEmail: userDoc.email,
+    courseId: authoritativeCourseId,
+    courseTitle: course.title,
+    progressPercent: 0,
+    completedLectures: [],
+    lastWatchedLectureId: firstLectureId,
+    lastWatchedPositionSeconds: 0,
+    paymentId: "free_enrollment",
+    razorpayOrderId: "free_order",
+    razorpayPaymentId: `free_enr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    enrolledAt: new Date().toISOString(),
+    certificateIssued: false,
+  });
+
+  await newEnrollment.save();
+
+  // 7. Update User.enrolledCourses
+  await MongoUser.updateOne(
+    { userId: userDoc.userId },
+    { $addToSet: { enrolledCourses: authoritativeCourseId } }
+  );
+
+  // 8. Increment Course.studentsEnrolled
+  await MongoCourse.updateOne(
+    { $or: [{ courseId: course.courseId }, { _id: course._id }] },
+    { $inc: { studentsEnrolled: 1 } }
+  );
+
+  console.log(`✅ [Free Enrollment] Student ${userDoc.email} (${userDoc.userId}) enrolled in "${course.title}" (${authoritativeCourseId})`);
+
+  return {
+    success: true,
+    alreadyEnrolled: false,
+    message: "Enrolled in free course successfully!",
+    enrollment: newEnrollment.toObject(),
+    courseId: authoritativeCourseId,
+    courseTitle: course.title,
+  };
+}
+
+/**
  * Vercel Serverless Function Handler
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -708,7 +862,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
 
-  // 2. POST /api/courses
+  // 2. POST /api/courses (and /api/courses/:id/enroll-free)
   if (req.method === "POST") {
     try {
       const authHeader = req.headers.authorization;
@@ -737,13 +891,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
-      if (decoded.role !== "teacher" && decoded.role !== "admin") {
-        return res.status(403).json({
-          success: false,
-          message: "Forbidden. Access requires one of the following roles: teacher, admin.",
-        });
-      }
-
       let body = req.body;
       if (typeof body === "string") {
         try {
@@ -753,11 +900,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
 
-      // Handle thumbnail actions if routed via /api/courses/upload-thumbnail or /api/courses?path=upload-thumbnail
+      // Check if this is free course enrollment: POST /api/courses/:id/enroll-free
       const pathParam = Array.isArray(req.query?.path)
         ? req.query.path.join("/")
         : (req.query?.path as string) || "";
       const rawUrl = req.url || "";
+      const isEnrollFree =
+        pathParam.includes("enroll-free") ||
+        rawUrl.includes("enroll-free") ||
+        req.query?.action === "enroll-free";
+
+      if (isEnrollFree) {
+        if (decoded.role !== "student") {
+          return res.status(403).json({
+            success: false,
+            message: "Forbidden. Only students can enroll in courses.",
+          });
+        }
+
+        let targetCourseId = (req.query?.id as string) || (req.query?.courseId as string) || "";
+        if (!targetCourseId && pathParam) {
+          const parts = pathParam.split("/");
+          targetCourseId = parts[0] !== "enroll-free" ? parts[0] : parts[1] || "";
+        }
+        if (!targetCourseId && rawUrl) {
+          const m = rawUrl.match(/\/api\/courses\/([^/?#]+)\/enroll-free/);
+          if (m && m[1]) targetCourseId = m[1];
+        }
+        if (!targetCourseId && body?.courseId) {
+          targetCourseId = body.courseId;
+        }
+
+        const result = await enrollFreeCourseInDb(targetCourseId, decoded.userId, decoded.role);
+        return res.status(200).json(result);
+      }
+
+      // Role check for course creation / thumbnail operations
+      if (decoded.role !== "teacher" && decoded.role !== "admin") {
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden. Access requires one of the following roles: teacher, admin.",
+        });
+      }
+
+      // Handle thumbnail actions if routed via /api/courses/upload-thumbnail or /api/courses?path=upload-thumbnail
       const isUploadThumbnail =
         pathParam === "upload-thumbnail" || rawUrl.includes("/upload-thumbnail");
       const isDeleteThumbnail =
