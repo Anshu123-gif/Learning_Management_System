@@ -909,8 +909,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       return res.status(200).json(result);
     } catch (err: any) {
-      console.error("[Vercel /api/courses] GET Error:", err);
       const statusCode = err.statusCode || 500;
+      if (statusCode >= 500) {
+        console.error("[Vercel /api/courses] GET Error:", err);
+      } else {
+        console.warn(`[Vercel /api/courses] GET Client (${statusCode}):`, err.message);
+      }
       return res.status(statusCode).json({
         success: false,
         message: err.message || "Failed to retrieve courses.",
@@ -1046,8 +1050,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const result = await createCourseInDb(body, decoded.userId);
       return res.status(201).json(result);
     } catch (err: any) {
-      console.error("[Vercel /api/courses] POST Error:", err);
       const statusCode = err.statusCode || 500;
+      if (statusCode >= 500) {
+        console.error("[Vercel /api/courses] POST Error:", err);
+      } else {
+        console.warn(`[Vercel /api/courses] POST Client (${statusCode}):`, err.message);
+      }
       return res.status(statusCode).json({
         success: false,
         message: err.message || "Failed to create course in MongoDB.",
@@ -1338,8 +1346,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const result = await deleteCourseFromDb(courseId, decoded.userId, decoded.role);
       return res.status(200).json(result);
     } catch (err: any) {
-      console.error("[Vercel /api/courses] DELETE Error:", err);
       const statusCode = err.statusCode || 500;
+      if (statusCode >= 500) {
+        console.error("[Vercel /api/courses] DELETE Error:", err);
+      } else {
+        console.warn(`[Vercel /api/courses] DELETE Client (${statusCode}):`, err.message);
+      }
       return res.status(statusCode).json({
         success: false,
         message: err.message || "Failed to delete content from MongoDB.",

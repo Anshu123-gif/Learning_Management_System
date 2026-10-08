@@ -20,6 +20,9 @@ export interface LectureMaterial {
   fileSizeMb: number;
   fileType: "pdf";
   publicId?: string;
+  resourceType?: string;
+  deliveryType?: string;
+  format?: string;
   secureUrl: string;
   uploadedBy?: string;
   createdAt: string;
@@ -134,7 +137,7 @@ export async function uploadLectureMaterial(input: UploadMaterialInput) {
   if (estimatedSizeBytes > MAX_PDF_FILE_SIZE_BYTES) {
     const sizeInMB = (estimatedSizeBytes / (1024 * 1024)).toFixed(1);
     const err: any = new Error(`PDF file size (${sizeInMB} MB) exceeds maximum allowed limit of 25 MB.`);
-    err.statusCode = 400;
+    err.statusCode = 413;
     throw err;
   }
 
@@ -142,16 +145,33 @@ export async function uploadLectureMaterial(input: UploadMaterialInput) {
 
   // 5. Verify section and lecture existence in course curriculum
   const sections = course.sections || [];
-  const targetSection = sections.find((s: any) => String(s._id || s.sectionId) === String(sectionId));
-  if (!targetSection) {
-    const err: any = new Error(`Section "${sectionId}" not found in course.`);
-    err.statusCode = 404;
-    throw err;
+  let targetSection = sections.find((s: any) => {
+    const sid = String(s.sectionId || s._id || s.id || "");
+    return sid === String(sectionId) || sid.toLowerCase() === String(sectionId).toLowerCase();
+  });
+
+  let targetLecture = targetSection
+    ? (targetSection.lectures || []).find((l: any) => {
+        const lid = String(l.lectureId || l._id || l.id || "");
+        return lid === String(lectureId) || lid.toLowerCase() === String(lectureId).toLowerCase();
+      })
+    : null;
+
+  // Fallback: search across all sections in the course if not matched in specified section
+  if (!targetLecture) {
+    for (const sec of sections) {
+      const foundLec = (sec.lectures || []).find((l: any) => {
+        const lid = String(l.lectureId || l._id || l.id || "");
+        return lid === String(lectureId) || lid.toLowerCase() === String(lectureId).toLowerCase();
+      });
+      if (foundLec) {
+        targetSection = sec;
+        targetLecture = foundLec;
+        break;
+      }
+    }
   }
 
-  const targetLecture = (targetSection.lectures || []).find(
-    (l: any) => String(l._id || l.lectureId) === String(lectureId)
-  );
   if (!targetLecture) {
     const err: any = new Error(`Lecture "${lectureId}" not found in section "${sectionId}".`);
     err.statusCode = 404;
@@ -204,6 +224,9 @@ export async function uploadLectureMaterial(input: UploadMaterialInput) {
     fileSizeMb,
     fileType: "pdf",
     publicId: uploadResult.public_id,
+    resourceType: uploadResult.resource_type || "image",
+    deliveryType: uploadResult.type || "upload",
+    format: uploadResult.format || "pdf",
     secureUrl: uploadResult.secure_url,
     uploadedBy: userId,
     createdAt: new Date().toISOString(),
@@ -256,8 +279,8 @@ export async function uploadLectureMaterial(input: UploadMaterialInput) {
 export async function deleteLectureMaterial(input: DeleteMaterialInput) {
   const { courseId, sectionId, lectureId, materialId, userId, userRole } = input;
 
-  if (!courseId || !sectionId || !lectureId || !materialId) {
-    const err: any = new Error("courseId, sectionId, lectureId, and materialId are required.");
+  if (!courseId || !lectureId || !materialId || materialId === "undefined" || materialId === "null") {
+    const err: any = new Error("courseId, lectureId, and a valid materialId are required.");
     err.statusCode = 400;
     throw err;
   }
@@ -291,16 +314,33 @@ export async function deleteLectureMaterial(input: DeleteMaterialInput) {
   }
 
   const sections = course.sections || [];
-  const targetSection = sections.find((s: any) => String(s._id || s.sectionId) === String(sectionId));
-  if (!targetSection) {
-    const err: any = new Error(`Section "${sectionId}" not found in course.`);
-    err.statusCode = 404;
-    throw err;
+  let targetSection = sections.find((s: any) => {
+    const sid = String(s.sectionId || s._id || s.id || "");
+    return sid === String(sectionId) || sid.toLowerCase() === String(sectionId).toLowerCase();
+  });
+
+  let targetLecture = targetSection
+    ? (targetSection.lectures || []).find((l: any) => {
+        const lid = String(l.lectureId || l._id || l.id || "");
+        return lid === String(lectureId) || lid.toLowerCase() === String(lectureId).toLowerCase();
+      })
+    : null;
+
+  // Fallback: search across all sections in the course if not matched in specified section
+  if (!targetLecture) {
+    for (const sec of sections) {
+      const foundLec = (sec.lectures || []).find((l: any) => {
+        const lid = String(l.lectureId || l._id || l.id || "");
+        return lid === String(lectureId) || lid.toLowerCase() === String(lectureId).toLowerCase();
+      });
+      if (foundLec) {
+        targetSection = sec;
+        targetLecture = foundLec;
+        break;
+      }
+    }
   }
 
-  const targetLecture = (targetSection.lectures || []).find(
-    (l: any) => String(l._id || l.lectureId) === String(lectureId)
-  );
   if (!targetLecture) {
     const err: any = new Error(`Lecture "${lectureId}" not found in section "${sectionId}".`);
     err.statusCode = 404;
@@ -310,7 +350,9 @@ export async function deleteLectureMaterial(input: DeleteMaterialInput) {
   const materials: LectureMaterial[] = Array.isArray(targetLecture.materials)
     ? targetLecture.materials
     : [];
-  const targetMaterial = materials.find((m: any) => m.materialId === materialId);
+  const targetMaterial = materials.find(
+    (m: any) => String(m.materialId || m._id || m.id) === String(materialId)
+  );
 
   if (!targetMaterial) {
     const err: any = new Error(`Material with ID "${materialId}" not found in lecture.`);
@@ -366,8 +408,8 @@ export async function deleteLectureMaterial(input: DeleteMaterialInput) {
 export async function getAuthorizedMaterialAccess(input: AccessMaterialInput) {
   const { courseId, sectionId, lectureId, materialId, userId, userRole } = input;
 
-  if (!courseId || !lectureId || !materialId) {
-    const err: any = new Error("courseId, lectureId, and materialId are required.");
+  if (!courseId || !lectureId || !materialId || materialId === "undefined" || materialId === "null") {
+    const err: any = new Error("courseId, lectureId, and a valid materialId are required.");
     err.statusCode = 400;
     throw err;
   }
@@ -415,9 +457,12 @@ export async function getAuthorizedMaterialAccess(input: AccessMaterialInput) {
   const sections = course.sections || [];
   for (const sec of sections) {
     for (const lec of sec.lectures || []) {
-      if (String(lec._id || lec.lectureId) === String(lectureId)) {
+      const lid = String(lec.lectureId || lec._id || lec.id || "");
+      if (lid === String(lectureId) || lid.toLowerCase() === String(lectureId).toLowerCase()) {
         if (Array.isArray(lec.materials)) {
-          const mat = lec.materials.find((m: any) => m.materialId === materialId);
+          const mat = lec.materials.find(
+            (m: any) => String(m.materialId || m._id || m.id) === String(materialId)
+          );
           if (mat) {
             foundMaterial = mat;
             break;
@@ -434,22 +479,60 @@ export async function getAuthorizedMaterialAccess(input: AccessMaterialInput) {
     throw err;
   }
 
-  // Generate signed / direct delivery URL
+  // Generate signed / authenticated delivery URLs
   let downloadUrl = foundMaterial.secureUrl;
+  let viewUrl = foundMaterial.secureUrl;
   const config = getCloudinaryConfig();
 
   if (foundMaterial.publicId && config.isConfigured) {
     configureCloudinary();
+    const resourceType = foundMaterial.resourceType || "image";
+    const deliveryType = foundMaterial.deliveryType || "upload";
+    const format = foundMaterial.format || "pdf";
+    const expiresAt = Math.floor(Date.now() / 1000) + 3600; // 1-hour expiration
+
     try {
-      // Cloudinary URL with secure download flag
-      downloadUrl = cloudinary.url(foundMaterial.publicId, {
-        resource_type: "raw",
-        secure: true,
-        sign_url: true,
-        flags: "attachment",
-      });
+      // 1. Authenticated download URL via Cloudinary API with Content-Disposition: attachment
+      downloadUrl = cloudinary.utils.private_download_url(
+        foundMaterial.publicId,
+        format,
+        {
+          resource_type: resourceType,
+          type: deliveryType,
+          attachment: true,
+          expires_at: expiresAt,
+        }
+      );
+
+      // 2. Authenticated view URL via Cloudinary API with Content-Disposition: inline
+      viewUrl = cloudinary.utils.private_download_url(
+        foundMaterial.publicId,
+        format,
+        {
+          resource_type: resourceType,
+          type: deliveryType,
+          attachment: false,
+          expires_at: expiresAt,
+        }
+      );
     } catch {
-      downloadUrl = foundMaterial.secureUrl;
+      // Fallback: signed delivery URL using API secret signature
+      try {
+        downloadUrl = cloudinary.url(`${foundMaterial.publicId}.${format}`, {
+          resource_type: resourceType,
+          secure: true,
+          sign_url: true,
+          flags: "attachment",
+        });
+        viewUrl = cloudinary.url(`${foundMaterial.publicId}.${format}`, {
+          resource_type: resourceType,
+          secure: true,
+          sign_url: true,
+        });
+      } catch {
+        downloadUrl = foundMaterial.secureUrl;
+        viewUrl = foundMaterial.secureUrl;
+      }
     }
   }
 
@@ -457,7 +540,7 @@ export async function getAuthorizedMaterialAccess(input: AccessMaterialInput) {
     success: true,
     material: foundMaterial,
     downloadUrl,
-    viewUrl: foundMaterial.secureUrl,
+    viewUrl,
   };
 }
 
@@ -516,7 +599,8 @@ export async function getLectureMaterials(input: {
   const sections = course.sections || [];
   for (const sec of sections) {
     for (const lec of sec.lectures || []) {
-      if (String(lec._id || lec.lectureId) === String(lectureId)) {
+      const lid = String(lec.lectureId || lec._id || lec.id || "");
+      if (lid === String(lectureId) || lid.toLowerCase() === String(lectureId).toLowerCase()) {
         materials = Array.isArray(lec.materials) ? lec.materials : [];
         break;
       }

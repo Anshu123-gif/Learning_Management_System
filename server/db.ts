@@ -1,3 +1,4 @@
+import dns from "dns";
 import mongoose from "mongoose";
 
 interface MongooseCache {
@@ -16,8 +17,6 @@ if (!globalThis.mongooseCache) {
   globalThis.mongooseCache = cached;
 }
 
-const DEFAULT_MONGODB_URI = "mongodb+srv://san414706_db_user:sYHC0uMqvY0WQOTy@cluster0.w2yjysh.mongodb.net/sheryians_lms?retryWrites=true&w=majority&appName=Cluster0";
-
 // Diagnostic metrics
 let lastConnectDurationMs = 0;
 let lastConnectionError: string | null = null;
@@ -35,11 +34,62 @@ const MONGO_OPTIONS: mongoose.ConnectOptions = {
   autoIndex: false,
 };
 
-export async function connectMongoDB(retries = 2, delayMs = 1500): Promise<boolean> {
-  const uri = process.env.MONGODB_URI || DEFAULT_MONGODB_URI;
-  if (!uri) {
-    console.error("❌ MongoDB connection failed: No connection URI provided.");
-    lastConnectionError = "No connection URI provided";
+/**
+ * Resolves a mongodb+srv:// connection URI to a direct replica set mongodb:// URI.
+ * In cloud container environments, OpenSSL 3 and Node.js often trigger TLS alert 80
+ * during the initial SRV handshake with MongoDB Atlas free clusters. Converting
+ * to the explicit multi-host replica set URI with ssl=true avoids this TLS issue.
+ */
+async function normalizeMongoUri(rawUri: string): Promise<string> {
+  if (!rawUri.startsWith("mongodb+srv://")) {
+    return rawUri;
+  }
+
+  const match = rawUri.match(/^mongodb\+srv:\/\/([^:]+):([^@]+)@([^/?]+)(?:\/([^?]*))?(?:\?(.*))?$/);
+  if (!match) {
+    return rawUri;
+  }
+
+  const [, user, pass, host, dbName, queryStr] = match;
+
+  try {
+    const [srvRecords, txtRecords] = await Promise.all([
+      dns.promises.resolveSrv(`_mongodb._tcp.${host}`),
+      dns.promises.resolveTxt(host).catch(() => []),
+    ]);
+
+    if (!srvRecords || srvRecords.length === 0) {
+      return rawUri;
+    }
+
+    const hostsStr = srvRecords.map((r) => `${r.name}:${r.port}`).join(",");
+    let replicaSet = "";
+    let authSource = "admin";
+
+    if (txtRecords.length > 0) {
+      const txtJoined = txtRecords.flat().join("&");
+      const params = new URLSearchParams(txtJoined);
+      if (params.get("replicaSet")) replicaSet = params.get("replicaSet") || "";
+      if (params.get("authSource")) authSource = params.get("authSource") || "admin";
+    }
+
+    const queryParams = new URLSearchParams(queryStr || "");
+    queryParams.set("ssl", "true");
+    if (authSource && !queryParams.has("authSource")) queryParams.set("authSource", authSource);
+    if (replicaSet && !queryParams.has("replicaSet")) queryParams.set("replicaSet", replicaSet);
+
+    return `mongodb://${user}:${pass}@${hostsStr}/${dbName || ""}?${queryParams.toString()}`;
+  } catch (err: any) {
+    console.warn(`[MongoDB] SRV auto-resolution warning (${err?.message || err}). Proceeding with raw URI.`);
+    return rawUri;
+  }
+}
+
+export async function connectMongoDB(retries = 2, delayMs = 1000): Promise<boolean> {
+  const rawUri = process.env.MONGODB_URI;
+  if (!rawUri || !rawUri.trim()) {
+    console.warn("⚠️ MongoDB connection notice: No connection URI provided in process.env.MONGODB_URI.");
+    lastConnectionError = "No connection URI provided in process.env.MONGODB_URI";
     return false;
   }
 
@@ -67,6 +117,8 @@ export async function connectMongoDB(retries = 2, delayMs = 1500): Promise<boole
     cached.promise = null;
   }
 
+  const uri = await normalizeMongoUri(rawUri);
+
   // 4. Retry loop with promise reuse, IPv4 enforcement, and exponential backoff
   for (let attempt = 1; attempt <= retries; attempt++) {
     const startTime = Date.now();
@@ -90,8 +142,8 @@ export async function connectMongoDB(retries = 2, delayMs = 1500): Promise<boole
         : "Unknown connection error";
       lastConnectionError = sanitizedMsg;
 
-      console.error(
-        `❌ MongoDB Atlas connection error (attempt ${attempt}/${retries}, duration: ${lastConnectDurationMs}ms, readyState: ${mongoose.connection.readyState}):`,
+      console.warn(
+        `⚠️ MongoDB Atlas connection notice (attempt ${attempt}/${retries}, duration: ${lastConnectDurationMs}ms, readyState: ${mongoose.connection.readyState}):`,
         sanitizedMsg
       );
 
@@ -118,7 +170,7 @@ export function getMongoDiagnostics() {
   };
 
   return {
-    uriPresent: Boolean(process.env.MONGODB_URI || DEFAULT_MONGODB_URI),
+    uriPresent: Boolean(process.env.MONGODB_URI && process.env.MONGODB_URI.trim()),
     readyState: mongoose.connection.readyState,
     readyStateDescription: stateNames[mongoose.connection.readyState] || "unknown",
     cachedConnExists: Boolean(cached?.conn),

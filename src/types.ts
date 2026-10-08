@@ -28,6 +28,9 @@ export interface LectureMaterial {
   fileSizeMb: number;
   fileType: "pdf";
   publicId?: string;
+  resourceType?: string;
+  deliveryType?: string;
+  format?: string;
   secureUrl: string;
   uploadedBy?: string;
   createdAt: string;

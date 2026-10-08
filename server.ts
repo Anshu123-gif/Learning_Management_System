@@ -83,13 +83,36 @@ async function startServer() {
 
   app.use(
     express.json({
-      limit: "10mb",
+      limit: "50mb",
       verify: (req: any, _res, buf) => {
         req.rawBody = buf;
       },
     })
   );
-  app.use(express.urlencoded({ limit: "10mb", extended: true }));
+  app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
+  // Middleware to handle JSON parse or payload limit errors safely
+  app.use((err: any, _req: any, res: any, next: any) => {
+    if (
+      err &&
+      (err.type === "entity.too.large" ||
+        err.status === 413 ||
+        err.statusCode === 413 ||
+        err.name === "PayloadTooLargeError")
+    ) {
+      return res.status(413).json({
+        success: false,
+        message: "PDF file size exceeds maximum allowed limit of 25 MB.",
+      });
+    }
+    if (err instanceof SyntaxError && "body" in err) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid JSON format in request body.",
+      });
+    }
+    next(err);
+  });
 
   // Attempt connection to MongoDB Atlas
   connectMongoDB()
@@ -1067,8 +1090,12 @@ async function startServer() {
 
         return res.status(201).json(result);
       } catch (err: any) {
-        console.error("[Material Upload API] Error:", err);
         const statusCode = err.statusCode || 500;
+        if (statusCode >= 500) {
+          console.error("[Material Upload API] Server Error:", err);
+        } else {
+          console.warn(`[Material Upload API] Handled (${statusCode}):`, err.message);
+        }
         return res.status(statusCode).json({
           success: false,
           message: err.message || "Failed to upload study material.",
@@ -1098,8 +1125,12 @@ async function startServer() {
 
         return res.status(200).json(result);
       } catch (err: any) {
-        console.error("[Material Delete API] Error:", err);
         const statusCode = err.statusCode || 500;
+        if (statusCode >= 500) {
+          console.error("[Material Delete API] Server Error:", err);
+        } else {
+          console.warn(`[Material Delete API] Handled (${statusCode}):`, err.message);
+        }
         return res.status(statusCode).json({
           success: false,
           message: err.message || "Failed to delete study material.",
@@ -1127,8 +1158,12 @@ async function startServer() {
 
         return res.status(200).json(result);
       } catch (err: any) {
-        console.error("[Material List API] Error:", err);
         const statusCode = err.statusCode || 500;
+        if (statusCode >= 500) {
+          console.error("[Material List API] Server Error:", err);
+        } else {
+          console.warn(`[Material List API] Handled (${statusCode}):`, err.message);
+        }
         return res.status(statusCode).json({
           success: false,
           message: err.message || "Failed to fetch study materials.",
@@ -1157,8 +1192,12 @@ async function startServer() {
 
         return res.status(200).json(result);
       } catch (err: any) {
-        console.error("[Material Access API] Error:", err);
         const statusCode = err.statusCode || 500;
+        if (statusCode >= 500) {
+          console.error("[Material Access API] Server Error:", err);
+        } else {
+          console.warn(`[Material Access API] Handled (${statusCode}):`, err.message);
+        }
         return res.status(statusCode).json({
           success: false,
           message: err.message || "Failed to access study material.",

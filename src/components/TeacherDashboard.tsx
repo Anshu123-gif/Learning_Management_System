@@ -62,6 +62,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     uploadLectureMaterial,
     deleteLectureMaterial,
     fetchLectureMaterials,
+    getLectureMaterialAccess,
   } = useLms();
   const { currentUser, openAuthModal } = useAuth();
 
@@ -2456,7 +2457,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                                   )}
                                   <button
                                     type="button"
-                                    onClick={() => openLectureMaterialsModal(activeCurriculumCourse._id, section._id, lec)}
+                                    onClick={() => openLectureMaterialsModal(activeCurriculumCourse._id, section._id || section.sectionId, lec)}
                                     className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
                                     title="Attach or Manage PDF Study Materials"
                                   >
@@ -2674,15 +2675,36 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                       </div>
 
                       <div className="flex items-center gap-1.5 shrink-0">
-                        <a
-                          href={mat.secureUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!materialTargetCourseId || !materialTargetSectionId || !materialTargetLecture) {
+                              window.open(mat.secureUrl, "_blank");
+                              return;
+                            }
+                            try {
+                              const access = await getLectureMaterialAccess(
+                                materialTargetCourseId,
+                                materialTargetSectionId,
+                                materialTargetLecture._id,
+                                mat.materialId
+                              );
+                              if (access.success && access.viewUrl) {
+                                window.open(access.viewUrl, "_blank");
+                              } else if (access.downloadUrl) {
+                                window.open(access.downloadUrl, "_blank");
+                              } else {
+                                window.open(mat.secureUrl, "_blank");
+                              }
+                            } catch {
+                              window.open(mat.secureUrl, "_blank");
+                            }
+                          }}
                           className="px-2 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-[11px] font-semibold rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
                         >
                           <Download className="w-3 h-3 text-slate-500" />
                           <span>View</span>
-                        </a>
+                        </button>
                         <button
                           type="button"
                           disabled={isDeletingMaterialId === mat.materialId}

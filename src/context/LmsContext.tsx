@@ -783,8 +783,9 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (token) headers["Authorization"] = `Bearer ${token}`;
 
+      const sId = sectionId || "sec";
       const res = await fetch(
-        `/api/courses/${courseId}/sections/${sectionId}/lectures/${lectureId}/materials`,
+        `/api/courses/${courseId}/sections/${sId}/lectures/${lectureId}/materials`,
         {
           method: "POST",
           headers,
@@ -849,8 +850,9 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (token) headers["Authorization"] = `Bearer ${token}`;
 
+      const sId = sectionId || "sec";
       const res = await fetch(
-        `/api/courses/${courseId}/sections/${sectionId}/lectures/${lectureId}/materials/${materialId}`,
+        `/api/courses/${courseId}/sections/${sId}/lectures/${lectureId}/materials/${materialId}`,
         {
           method: "DELETE",
           headers,
@@ -902,8 +904,9 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (token) headers["Authorization"] = `Bearer ${token}`;
 
+      const sId = sectionId || "sec";
       const res = await fetch(
-        `/api/courses/${courseId}/sections/${sectionId}/lectures/${lectureId}/materials`,
+        `/api/courses/${courseId}/sections/${sId}/lectures/${lectureId}/materials`,
         { headers }
       );
 
@@ -929,8 +932,9 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (token) headers["Authorization"] = `Bearer ${token}`;
 
+      const sId = sectionId || "sec";
       const res = await fetch(
-        `/api/courses/${courseId}/sections/${sectionId}/lectures/${lectureId}/materials/${materialId}/access`,
+        `/api/courses/${courseId}/sections/${sId}/lectures/${lectureId}/materials/${materialId}/access`,
         { headers }
       );
 

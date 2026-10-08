@@ -2267,10 +2267,40 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
 
                             <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
                               {/* Open/View in Browser */}
-                              <a
-                                href={mat.secureUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
+                              <button
+                                type="button"
+                                disabled={isProcessing}
+                                onClick={async () => {
+                                  const matId = mat.materialId || (mat as any)._id || (mat as any).id;
+                                  if (!matId) {
+                                    if (mat.secureUrl) window.open(mat.secureUrl, "_blank");
+                                    return;
+                                  }
+                                  setAccessingMaterialId(matId);
+                                  setMaterialAccessError(null);
+                                  try {
+                                    const accessResult = await getLectureMaterialAccess(
+                                      activeCourse._id || (activeCourse as any).courseId,
+                                      currentSection?._id || (currentSection as any)?.sectionId || "",
+                                      currentLecture._id || (currentLecture as any)?.lectureId,
+                                      matId
+                                    );
+
+                                    if (accessResult.success && accessResult.viewUrl) {
+                                      window.open(accessResult.viewUrl, "_blank");
+                                    } else if (accessResult.downloadUrl) {
+                                      window.open(accessResult.downloadUrl, "_blank");
+                                    } else {
+                                      window.open(mat.secureUrl, "_blank");
+                                    }
+                                  } catch (err: any) {
+                                    console.warn("Failed to open material:", err);
+                                    setMaterialAccessError(err.message || "Could not open study material.");
+                                    if (mat.secureUrl) window.open(mat.secureUrl, "_blank");
+                                  } finally {
+                                    setAccessingMaterialId(null);
+                                  }
+                                }}
                                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border ${
                                   isLight
                                     ? "bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300"
@@ -2279,21 +2309,26 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                               >
                                 <FileText className="w-3.5 h-3.5 text-amber-500" />
                                 <span>Open PDF</span>
-                              </a>
+                              </button>
 
                               {/* Secure Authenticated Download */}
                               <button
                                 type="button"
                                 disabled={isProcessing}
                                 onClick={async () => {
-                                  setAccessingMaterialId(mat.materialId);
+                                  const matId = mat.materialId || (mat as any)._id || (mat as any).id;
+                                  if (!matId) {
+                                    if (mat.secureUrl) window.open(mat.secureUrl, "_blank");
+                                    return;
+                                  }
+                                  setAccessingMaterialId(matId);
                                   setMaterialAccessError(null);
                                   try {
                                     const accessResult = await getLectureMaterialAccess(
-                                      activeCourse._id,
-                                      currentSection?._id || "",
-                                      currentLecture._id,
-                                      mat.materialId
+                                      activeCourse._id || (activeCourse as any).courseId,
+                                      currentSection?._id || (currentSection as any)?.sectionId || "",
+                                      currentLecture._id || (currentLecture as any)?.lectureId,
+                                      matId
                                     );
 
                                     if (accessResult.success && accessResult.downloadUrl) {
