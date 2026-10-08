@@ -3,6 +3,7 @@ import {
   Course,
   Section,
   Lecture,
+  LectureMaterial,
   Enrollment,
   Quiz,
   QuizAttempt,
@@ -48,6 +49,31 @@ interface LmsContextType {
   deleteLecture: (courseId: string, sectionId: string, lectureId: string) => Promise<{ success: boolean; message?: string }>;
   saveCourseCurriculum: (courseId: string, sections: Section[]) => Promise<{ success: boolean; course?: Course; message?: string }>;
   
+  // PDF Study Materials (Teacher Upload & Student Access)
+  uploadLectureMaterial: (
+    courseId: string,
+    sectionId: string,
+    lectureId: string,
+    materialData: { title?: string; fileName: string; fileData: string }
+  ) => Promise<{ success: boolean; material?: LectureMaterial; message?: string }>;
+  deleteLectureMaterial: (
+    courseId: string,
+    sectionId: string,
+    lectureId: string,
+    materialId: string
+  ) => Promise<{ success: boolean; message?: string }>;
+  fetchLectureMaterials: (
+    courseId: string,
+    sectionId: string,
+    lectureId: string
+  ) => Promise<{ success: boolean; materials: LectureMaterial[]; message?: string }>;
+  getLectureMaterialAccess: (
+    courseId: string,
+    sectionId: string,
+    lectureId: string,
+    materialId: string
+  ) => Promise<{ success: boolean; downloadUrl?: string; viewUrl?: string; material?: LectureMaterial; message?: string }>;
+
   // Learning & Progress
   getEnrollmentForCourse: (courseId: string) => Enrollment | undefined;
   isEnrolled: (courseId: string) => boolean;
@@ -743,6 +769,184 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (err: any) {
       console.warn("Delete lecture error:", err);
       return { success: false, message: err.message || "Network error while deleting lecture." };
+    }
+  };
+
+  const uploadLectureMaterial = async (
+    courseId: string,
+    sectionId: string,
+    lectureId: string,
+    materialData: { title?: string; fileName: string; fileData: string }
+  ): Promise<{ success: boolean; material?: LectureMaterial; message?: string }> => {
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const res = await fetch(
+        `/api/courses/${courseId}/sections/${sectionId}/lectures/${lectureId}/materials`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify(materialData),
+        }
+      );
+
+      const data = await res.json();
+      if (res.ok && data.success && data.material) {
+        const newMaterial: LectureMaterial = data.material;
+        // Optimistically update courses state
+        setCourses((prev) =>
+          prev.map((c) => {
+            if (c._id === courseId || (c as any).courseId === courseId) {
+              const updatedSections = (c.sections || []).map((sec) => {
+                if (sec._id === sectionId || (sec as any).sectionId === sectionId) {
+                  const updatedLectures = (sec.lectures || []).map((lec) => {
+                    if (lec._id === lectureId || (lec as any).lectureId === lectureId) {
+                      const existingMaterials = Array.isArray(lec.materials) ? lec.materials : [];
+                      return {
+                        ...lec,
+                        materials: [...existingMaterials, newMaterial],
+                        resources: [
+                          ...(lec.resources || []),
+                          {
+                            title: newMaterial.title,
+                            url: newMaterial.secureUrl,
+                            fileType: "pdf" as const,
+                            sizeMb: newMaterial.fileSizeMb,
+                          },
+                        ],
+                      };
+                    }
+                    return lec;
+                  });
+                  return { ...sec, lectures: updatedLectures };
+                }
+                return sec;
+              });
+              return { ...c, sections: updatedSections };
+            }
+            return c;
+          })
+        );
+        return { success: true, material: newMaterial, message: data.message };
+      }
+      return { success: false, message: data.message || "Failed to upload study material." };
+    } catch (err: any) {
+      console.warn("Upload material error:", err);
+      return { success: false, message: err.message || "Network error while uploading study material." };
+    }
+  };
+
+  const deleteLectureMaterial = async (
+    courseId: string,
+    sectionId: string,
+    lectureId: string,
+    materialId: string
+  ): Promise<{ success: boolean; message?: string }> => {
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const res = await fetch(
+        `/api/courses/${courseId}/sections/${sectionId}/lectures/${lectureId}/materials/${materialId}`,
+        {
+          method: "DELETE",
+          headers,
+        }
+      );
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        // Update local courses state
+        setCourses((prev) =>
+          prev.map((c) => {
+            if (c._id === courseId || (c as any).courseId === courseId) {
+              const updatedSections = (c.sections || []).map((sec) => {
+                if (sec._id === sectionId || (sec as any).sectionId === sectionId) {
+                  const updatedLectures = (sec.lectures || []).map((lec) => {
+                    if (lec._id === lectureId || (lec as any).lectureId === lectureId) {
+                      const updatedMaterials = (lec.materials || []).filter(
+                        (m) => m.materialId !== materialId
+                      );
+                      return { ...lec, materials: updatedMaterials };
+                    }
+                    return lec;
+                  });
+                  return { ...sec, lectures: updatedLectures };
+                }
+                return sec;
+              });
+              return { ...c, sections: updatedSections };
+            }
+            return c;
+          })
+        );
+        return { success: true, message: data.message || "Study material deleted." };
+      }
+      return { success: false, message: data.message || "Failed to delete study material." };
+    } catch (err: any) {
+      console.warn("Delete material error:", err);
+      return { success: false, message: err.message || "Network error while deleting study material." };
+    }
+  };
+
+  const fetchLectureMaterials = async (
+    courseId: string,
+    sectionId: string,
+    lectureId: string
+  ): Promise<{ success: boolean; materials: LectureMaterial[]; message?: string }> => {
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const res = await fetch(
+        `/api/courses/${courseId}/sections/${sectionId}/lectures/${lectureId}/materials`,
+        { headers }
+      );
+
+      const data = await res.json();
+      if (res.ok && data.success && Array.isArray(data.materials)) {
+        return { success: true, materials: data.materials };
+      }
+      return { success: false, materials: [], message: data.message };
+    } catch (err: any) {
+      console.warn("Fetch materials error:", err);
+      return { success: false, materials: [], message: err.message };
+    }
+  };
+
+  const getLectureMaterialAccess = async (
+    courseId: string,
+    sectionId: string,
+    lectureId: string,
+    materialId: string
+  ): Promise<{ success: boolean; downloadUrl?: string; viewUrl?: string; material?: LectureMaterial; message?: string }> => {
+    try {
+      const token = localStorage.getItem("edupulse_jwt_token");
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const res = await fetch(
+        `/api/courses/${courseId}/sections/${sectionId}/lectures/${lectureId}/materials/${materialId}/access`,
+        { headers }
+      );
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        return {
+          success: true,
+          downloadUrl: data.downloadUrl,
+          viewUrl: data.viewUrl,
+          material: data.material,
+        };
+      }
+      return { success: false, message: data.message || "Failed to get access link." };
+    } catch (err: any) {
+      console.warn("Get material access error:", err);
+      return { success: false, message: err.message || "Network error." };
     }
   };
 
@@ -1542,6 +1746,10 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addLectureToSection,
         deleteLecture,
         saveCourseCurriculum,
+        uploadLectureMaterial,
+        deleteLectureMaterial,
+        fetchLectureMaterials,
+        getLectureMaterialAccess,
         getEnrollmentForCourse,
         isEnrolled,
         enrollInCourse,

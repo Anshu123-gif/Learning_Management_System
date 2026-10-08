@@ -13,6 +13,12 @@ import {
   deleteLectureFromDb,
 } from "../server/curriculumService.js";
 import { uploadCourseThumbnail, deleteCourseThumbnail } from "../server/thumbnailService.js";
+import {
+  uploadLectureMaterial,
+  deleteLectureMaterial,
+  getAuthorizedMaterialAccess,
+  getLectureMaterials,
+} from "../server/materialService.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "sheryians_lms_super_secure_jwt_secret_key_2025";
 
@@ -830,6 +836,56 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const myCourses = req.query?.myCourses as string;
       const status = req.query?.status as string;
 
+      const rawUrl = req.url || "";
+      const urlWithoutQuery = rawUrl.split("?")[0];
+
+      // Check if accessing a study material: /api/courses/:courseId/sections/:sectionId/lectures/:lectureId/materials/:materialId/access
+      const materialAccessMatch = urlWithoutQuery.match(
+        /\/api\/courses\/([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)\/materials\/([^/]+)\/access/
+      );
+      if (materialAccessMatch) {
+        if (!authHeader || !authHeader.startsWith("Bearer ")) {
+          return res.status(401).json({
+            success: false,
+            message: "Authentication required.",
+          });
+        }
+        const decoded: any = jwt.verify(authHeader.split(" ")[1], JWT_SECRET);
+        const [, cId, sId, lId, mId] = materialAccessMatch;
+        const result = await getAuthorizedMaterialAccess({
+          courseId: cId,
+          sectionId: sId,
+          lectureId: lId,
+          materialId: mId,
+          userId: decoded.userId,
+          userRole: decoded.role,
+        });
+        return res.status(200).json(result);
+      }
+
+      // Check if listing lecture materials: /api/courses/:courseId/sections/:sectionId/lectures/:lectureId/materials
+      const materialsListMatch = urlWithoutQuery.match(
+        /\/api\/courses\/([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)\/materials/
+      );
+      if (materialsListMatch) {
+        if (!authHeader || !authHeader.startsWith("Bearer ")) {
+          return res.status(401).json({
+            success: false,
+            message: "Authentication required.",
+          });
+        }
+        const decoded: any = jwt.verify(authHeader.split(" ")[1], JWT_SECRET);
+        const [, cId, sId, lId] = materialsListMatch;
+        const result = await getLectureMaterials({
+          courseId: cId,
+          sectionId: sId,
+          lectureId: lId,
+          userId: decoded.userId,
+          userRole: decoded.role,
+        });
+        return res.status(200).json(result);
+      }
+
       // Check if querying a single course by id or path
       let singleId = (req.query?.courseId as string) || (req.query?.id as string) || "";
       if (!singleId && req.query?.path) {
@@ -941,6 +997,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           success: false,
           message: "Forbidden. Access requires one of the following roles: teacher, admin.",
         });
+      }
+
+      // Handle material upload: POST /api/courses/:courseId/sections/:sectionId/lectures/:lectureId/materials
+      const materialUploadMatch = (req.url || "").split("?")[0].match(
+        /\/api\/courses\/([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)\/materials/
+      );
+      if (materialUploadMatch) {
+        const [, cId, sId, lId] = materialUploadMatch;
+        const result = await uploadLectureMaterial({
+          courseId: cId,
+          sectionId: sId,
+          lectureId: lId,
+          title: body?.title,
+          fileName: body?.fileName,
+          fileData: body?.fileData,
+          userId: decoded.userId,
+          userRole: decoded.role,
+        });
+        return res.status(201).json(result);
       }
 
       // Handle thumbnail actions if routed via /api/courses/upload-thumbnail or /api/courses?path=upload-thumbnail
@@ -1188,6 +1263,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const urlWithoutQuery = (req.url || "").split("?")[0];
+
+      // Check if deleting a study material: /api/courses/:courseId/sections/:sectionId/lectures/:lectureId/materials/:materialId
+      const materialDeleteMatch = urlWithoutQuery.match(
+        /\/api\/courses\/([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)\/materials\/([^/]+)/
+      );
+      if (materialDeleteMatch) {
+        const [, cId, sId, lId, mId] = materialDeleteMatch;
+        const result = await deleteLectureMaterial({
+          courseId: cId,
+          sectionId: sId,
+          lectureId: lId,
+          materialId: mId,
+          userId: decoded.userId,
+          userRole: decoded.role,
+        });
+        return res.status(200).json(result);
+      }
 
       // Check if deleting a lecture: /api/courses/:courseId/sections/:sectionId/lectures/:lectureId
       const lectureMatch = urlWithoutQuery.match(

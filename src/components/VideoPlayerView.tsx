@@ -76,6 +76,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
     getCertificateForCourse,
     fetchCourseById,
     quizAttempts,
+    getLectureMaterialAccess,
   } = useLms();
 
   const [activeCourse, setActiveCourse] = useState<Course>(course);
@@ -240,6 +241,10 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
   // Practice state (interactive quick checks)
   const [practiceAnswers, setPracticeAnswers] = useState<Record<string, number>>({});
   const [copiedCode, setCopiedCode] = useState(false);
+
+  // Material Access State
+  const [accessingMaterialId, setAccessingMaterialId] = useState<string | null>(null);
+  const [materialAccessError, setMaterialAccessError] = useState<string | null>(null);
 
   // Dynamic Cloudinary Secure Stream Loading
   const [streamVideoUrl, setStreamVideoUrl] = useState<string>("");
@@ -2184,69 +2189,237 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
               </div>
             )}
 
-            {/* TAB 5: RESOURCES */}
+            {/* TAB 5: RESOURCES & STUDY MATERIALS */}
             {activeTab === "resources" && (
-              <div className="space-y-4">
-                <h3
-                  className={`text-sm font-bold ${
-                    isLight ? "text-slate-900" : "text-white"
-                  }`}
-                >
-                  Lecture Downloads
-                </h3>
-                {currentLecture.resources && currentLecture.resources.length > 0 ? (
-                  <div className="space-y-2">
-                    {currentLecture.resources.map((res, i) => (
-                      <div
-                        key={i}
-                        className={`border rounded-xl p-3 flex items-center justify-between text-xs ${
-                          isLight
-                            ? "bg-white border-slate-200 shadow-2xs"
-                            : "bg-slate-900 border-slate-800"
+              <div className="space-y-6">
+                {/* 1. PDF STUDY MATERIALS / NOTES */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 bg-amber-500/20 text-amber-400 font-bold text-[10px] uppercase rounded-md tracking-wider">
+                          Official Curriculum Materials
+                        </span>
+                      </div>
+                      <h3
+                        className={`text-sm font-bold mt-1 ${
+                          isLight ? "text-slate-900" : "text-white"
                         }`}
                       >
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-500 flex items-center justify-center font-bold uppercase text-[10px]">
-                            {res.fileType}
-                          </div>
-                          <div>
-                            <div
-                              className={`font-semibold ${
-                                isLight ? "text-slate-900" : "text-white"
-                              }`}
-                            >
-                              {res.title}
+                        PDF Study Materials & Reference Notes
+                      </h3>
+                      <p className={`text-[11px] ${isLight ? "text-slate-600" : "text-slate-400"}`}>
+                        Curated study materials uploaded by your instructor for "{currentLecture.title}".
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-mono">
+                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                      <span className="hidden sm:inline text-[11px]">Enrolled Student Access</span>
+                    </div>
+                  </div>
+
+                  {materialAccessError && (
+                    <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl flex items-center gap-2 text-rose-400 text-xs">
+                      <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
+                      <span>{materialAccessError}</span>
+                    </div>
+                  )}
+
+                  {currentLecture.materials && currentLecture.materials.length > 0 ? (
+                    <div className="space-y-2.5">
+                      {currentLecture.materials.map((mat) => {
+                        const isProcessing = accessingMaterialId === mat.materialId;
+                        return (
+                          <div
+                            key={mat.materialId}
+                            className={`border rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs transition-colors ${
+                              isLight
+                                ? "bg-white border-slate-200 shadow-2xs hover:border-amber-400"
+                                : "bg-slate-900 border-slate-800 hover:border-amber-500/40"
+                            }`}
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-500 flex items-center justify-center font-bold text-xs shrink-0 border border-amber-500/30 shadow-inner">
+                                <FileText className="w-5 h-5" />
+                              </div>
+                              <div className="min-w-0">
+                                <div
+                                  className={`font-bold truncate text-sm ${
+                                    isLight ? "text-slate-900" : "text-white"
+                                  }`}
+                                >
+                                  {mat.title}
+                                </div>
+                                <div
+                                  className={`text-[11px] flex items-center gap-2 mt-0.5 ${
+                                    isLight ? "text-slate-500" : "text-slate-400"
+                                  }`}
+                                >
+                                  <span className="font-mono">{mat.fileName}</span>
+                                  <span>•</span>
+                                  <span>{mat.fileSizeMb} MB</span>
+                                  <span>•</span>
+                                  <span className="text-amber-500 font-semibold">PDF Study Material</span>
+                                </div>
+                              </div>
                             </div>
-                            <div
-                              className={`text-[10px] ${
-                                isLight ? "text-slate-500" : "text-slate-400"
-                              }`}
-                            >
-                              {res.sizeMb} MB • Verified file
+
+                            <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                              {/* Open/View in Browser */}
+                              <a
+                                href={mat.secureUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border ${
+                                  isLight
+                                    ? "bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300"
+                                    : "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700"
+                                }`}
+                              >
+                                <FileText className="w-3.5 h-3.5 text-amber-500" />
+                                <span>Open PDF</span>
+                              </a>
+
+                              {/* Secure Authenticated Download */}
+                              <button
+                                type="button"
+                                disabled={isProcessing}
+                                onClick={async () => {
+                                  setAccessingMaterialId(mat.materialId);
+                                  setMaterialAccessError(null);
+                                  try {
+                                    const accessResult = await getLectureMaterialAccess(
+                                      activeCourse._id,
+                                      currentSection?._id || "",
+                                      currentLecture._id,
+                                      mat.materialId
+                                    );
+
+                                    if (accessResult.success && accessResult.downloadUrl) {
+                                      // Trigger browser download safely
+                                      const downloadLink = document.createElement("a");
+                                      downloadLink.href = accessResult.downloadUrl;
+                                      downloadLink.target = "_blank";
+                                      downloadLink.download = mat.fileName || "study_material.pdf";
+                                      document.body.appendChild(downloadLink);
+                                      downloadLink.click();
+                                      document.body.removeChild(downloadLink);
+                                    } else {
+                                      // Fallback to secureUrl directly
+                                      window.open(mat.secureUrl, "_blank");
+                                    }
+                                  } catch (err: any) {
+                                    console.error("Failed to download material:", err);
+                                    setMaterialAccessError(err.message || "Could not generate download link.");
+                                    window.open(mat.secureUrl, "_blank");
+                                  } finally {
+                                    setAccessingMaterialId(null);
+                                  }
+                                }}
+                                className={`px-3.5 py-1.5 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all cursor-pointer shadow-xs ${
+                                  isProcessing
+                                    ? "bg-amber-600/50 text-white cursor-wait"
+                                    : "bg-amber-600 hover:bg-amber-500 text-white"
+                                }`}
+                              >
+                                {isProcessing ? (
+                                  <>
+                                    <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                    <span>Preparing...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Download className="w-3.5 h-3.5" />
+                                    <span>Download</span>
+                                  </>
+                                )}
+                              </button>
                             </div>
                           </div>
-                        </div>
-                        <button
-                          onClick={() => alert(`Simulating download of ${res.title}`)}
-                          className={`px-3 py-1.5 text-xs font-medium rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border ${
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div
+                      className={`p-6 rounded-2xl border text-center space-y-2 ${
+                        isLight
+                          ? "bg-slate-50 border-slate-200"
+                          : "bg-slate-900/60 border-slate-800"
+                      }`}
+                    >
+                      <FileText className="w-8 h-8 text-slate-500 mx-auto" />
+                      <p
+                        className={`text-xs font-medium ${
+                          isLight ? "text-slate-600" : "text-slate-400"
+                        }`}
+                      >
+                        No PDF study materials attached to this lecture yet.
+                      </p>
+                      <p className="text-[11px] text-slate-500">
+                        When the instructor uploads revision notes, cheatsheets, or exercise sheets, they will appear here.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* 2. GENERAL DOWNLOADABLE ASSETS / RESOURCES */}
+                {currentLecture.resources && currentLecture.resources.length > 0 && (
+                  <div className="space-y-3 pt-4 border-t border-slate-800/80">
+                    <h4
+                      className={`text-xs font-bold uppercase tracking-wider ${
+                        isLight ? "text-slate-700" : "text-slate-300"
+                      }`}
+                    >
+                      Additional Assets & Source Files ({currentLecture.resources.length})
+                    </h4>
+                    <div className="space-y-2">
+                      {currentLecture.resources.map((res, i) => (
+                        <div
+                          key={i}
+                          className={`border rounded-xl p-3 flex items-center justify-between text-xs ${
                             isLight
-                              ? "bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200"
-                              : "bg-slate-800 hover:bg-slate-700 text-slate-200 border-transparent"
+                              ? "bg-white border-slate-200 shadow-2xs"
+                              : "bg-slate-900 border-slate-800"
                           }`}
                         >
-                          <Download className="w-3.5 h-3.5" /> Download
-                        </button>
-                      </div>
-                    ))}
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold uppercase text-[10px] shrink-0">
+                              {res.fileType}
+                            </div>
+                            <div className="min-w-0">
+                              <div
+                                className={`font-semibold truncate ${
+                                  isLight ? "text-slate-900" : "text-white"
+                                }`}
+                              >
+                                {res.title}
+                              </div>
+                              <div
+                                className={`text-[10px] ${
+                                  isLight ? "text-slate-500" : "text-slate-400"
+                                }`}
+                              >
+                                {res.sizeMb} MB • Verified file
+                              </div>
+                            </div>
+                          </div>
+                          <a
+                            href={res.url || "#"}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className={`px-3 py-1.5 text-xs font-medium rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border ${
+                              isLight
+                                ? "bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200"
+                                : "bg-slate-800 hover:bg-slate-700 text-slate-200 border-transparent"
+                            }`}
+                          >
+                            <Download className="w-3.5 h-3.5" /> Download
+                          </a>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                ) : (
-                  <p
-                    className={`text-xs italic ${
-                      isLight ? "text-slate-500" : "text-slate-400"
-                    }`}
-                  >
-                    No downloadable assets attached to this lecture.
-                  </p>
                 )}
               </div>
             )}

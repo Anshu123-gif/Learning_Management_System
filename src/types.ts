@@ -21,6 +21,18 @@ export interface Resource {
   sizeMb: number;
 }
 
+export interface LectureMaterial {
+  materialId: string;
+  title: string;
+  fileName: string;
+  fileSizeMb: number;
+  fileType: "pdf";
+  publicId?: string;
+  secureUrl: string;
+  uploadedBy?: string;
+  createdAt: string;
+}
+
 export interface Lecture {
   _id: string;
   sectionId: string;
@@ -33,6 +45,7 @@ export interface Lecture {
   s3Key?: string; // legacy compatibility
   isPreviewFree: boolean;
   resources: Resource[];
+  materials?: LectureMaterial[];
   description?: string;
 }
 

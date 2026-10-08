@@ -30,8 +30,10 @@ import {
   ChevronUp,
   ChevronDown,
   Check,
+  FileText,
+  Download,
 } from "lucide-react";
-import { Course, Lecture, Section } from "../types";
+import { Course, Lecture, Section, LectureMaterial } from "../types";
 import { useLms } from "../context/LmsContext";
 import { useAuth } from "../context/AuthContext";
 
@@ -57,6 +59,9 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     updateQuiz,
     deleteQuiz,
     fetchQuizzesForCourse,
+    uploadLectureMaterial,
+    deleteLectureMaterial,
+    fetchLectureMaterials,
   } = useLms();
   const { currentUser, openAuthModal } = useAuth();
 
@@ -210,6 +215,19 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   // Inline Section Title Editing State
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
   const [editingSectionTitle, setEditingSectionTitle] = useState("");
+
+  // PDF Study Material Modal State
+  const [showMaterialModal, setShowMaterialModal] = useState(false);
+  const [materialTargetCourseId, setMaterialTargetCourseId] = useState("");
+  const [materialTargetSectionId, setMaterialTargetSectionId] = useState("");
+  const [materialTargetLecture, setMaterialTargetLecture] = useState<Lecture | null>(null);
+  const [materialTitle, setMaterialTitle] = useState("");
+  const [selectedPdfFile, setSelectedPdfFile] = useState<File | null>(null);
+  const [isUploadingMaterial, setIsUploadingMaterial] = useState(false);
+  const [uploadMaterialProgress, setUploadMaterialProgress] = useState(0);
+  const [materialError, setMaterialError] = useState("");
+  const [materialSuccess, setMaterialSuccess] = useState("");
+  const [isDeletingMaterialId, setIsDeletingMaterialId] = useState<string | null>(null);
 
   // Search & Filter
   const [courseSearchQuery, setCourseSearchQuery] = useState("");
@@ -1294,6 +1312,137 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     }
   };
 
+  const openLectureMaterialsModal = (courseId: string, sectionId: string, lecture: Lecture) => {
+    setMaterialTargetCourseId(courseId);
+    setMaterialTargetSectionId(sectionId);
+    setMaterialTargetLecture(lecture);
+    setMaterialTitle("");
+    setSelectedPdfFile(null);
+    setMaterialError("");
+    setMaterialSuccess("");
+    setUploadMaterialProgress(0);
+    setShowMaterialModal(true);
+  };
+
+  const handleUploadMaterialSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!materialTargetCourseId || !materialTargetSectionId || !materialTargetLecture) {
+      setMaterialError("Target lecture is not specified.");
+      return;
+    }
+
+    if (!selectedPdfFile) {
+      setMaterialError("Please select a PDF document to upload.");
+      return;
+    }
+
+    // Client-side validation: must be PDF
+    if (
+      selectedPdfFile.type &&
+      selectedPdfFile.type !== "application/pdf" &&
+      !selectedPdfFile.name.toLowerCase().endsWith(".pdf")
+    ) {
+      setMaterialError("Invalid file format. Only PDF files (.pdf) are allowed.");
+      return;
+    }
+
+    // Client-side size validation: max 25MB
+    if (selectedPdfFile.size > 25 * 1024 * 1024) {
+      setMaterialError(
+        `File size (${(selectedPdfFile.size / (1024 * 1024)).toFixed(1)} MB) exceeds 25 MB limit.`
+      );
+      return;
+    }
+
+    setIsUploadingMaterial(true);
+    setMaterialError("");
+    setMaterialSuccess("");
+    setUploadMaterialProgress(30);
+
+    try {
+      // Read file as base64 data URI
+      const base64Data = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error("Failed to read file"));
+        reader.readAsDataURL(selectedPdfFile);
+      });
+
+      setUploadMaterialProgress(60);
+
+      const result = await uploadLectureMaterial(
+        materialTargetCourseId,
+        materialTargetSectionId,
+        materialTargetLecture._id,
+        {
+          title: materialTitle.trim() || selectedPdfFile.name.replace(/\.pdf$/i, ""),
+          fileName: selectedPdfFile.name,
+          fileData: base64Data,
+        }
+      );
+
+      setUploadMaterialProgress(100);
+
+      if (result.success && result.material) {
+        setMaterialSuccess("PDF Study Material uploaded and attached successfully!");
+        // Update local lecture state
+        const updatedMat = result.material;
+        setMaterialTargetLecture((prev) =>
+          prev
+            ? {
+                ...prev,
+                materials: [...(prev.materials || []), updatedMat],
+              }
+            : null
+        );
+        setSelectedPdfFile(null);
+        setMaterialTitle("");
+      } else {
+        setMaterialError(result.message || "Failed to upload study material.");
+      }
+    } catch (err: any) {
+      console.error("Material upload error:", err);
+      setMaterialError(err.message || "Error processing PDF upload.");
+    } finally {
+      setIsUploadingMaterial(false);
+    }
+  };
+
+  const handleDeleteMaterial = async (materialId: string) => {
+    if (!materialTargetCourseId || !materialTargetSectionId || !materialTargetLecture) return;
+    if (!window.confirm("Are you sure you want to delete this study material?")) return;
+
+    setIsDeletingMaterialId(materialId);
+    setMaterialError("");
+    try {
+      const result = await deleteLectureMaterial(
+        materialTargetCourseId,
+        materialTargetSectionId,
+        materialTargetLecture._id,
+        materialId
+      );
+
+      if (result.success) {
+        setMaterialTargetLecture((prev) =>
+          prev
+            ? {
+                ...prev,
+                materials: (prev.materials || []).filter((m) => m.materialId !== materialId),
+              }
+            : null
+        );
+        setMaterialSuccess("Study material deleted successfully.");
+      } else {
+        setMaterialError(result.message || "Failed to delete study material.");
+      }
+    } catch (err: any) {
+      console.error("Delete material error:", err);
+      setMaterialError(err.message || "Failed to delete study material.");
+    } finally {
+      setIsDeletingMaterialId(null);
+    }
+  };
+
   return (
     <div className="space-y-8 pb-16">
       {/* Teacher Stats Header */}
@@ -2299,6 +2448,21 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                                       Standard
                                     </span>
                                   )}
+                                  {lec.materials && lec.materials.length > 0 && (
+                                    <span className="px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 text-[9px] font-bold rounded flex items-center gap-1">
+                                      <FileText className="w-2.5 h-2.5" />
+                                      <span>{lec.materials.length} PDF{lec.materials.length > 1 ? "s" : ""}</span>
+                                    </span>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => openLectureMaterialsModal(activeCurriculumCourse._id, section._id, lec)}
+                                    className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                                    title="Attach or Manage PDF Study Materials"
+                                  >
+                                    <FileText className="w-3 h-3 text-amber-600" />
+                                    <span>Materials</span>
+                                  </button>
                                   <button
                                     type="button"
                                     onClick={() => openEditLectureModal(activeCurriculumCourse._id, section._id, lec)}
@@ -2420,6 +2584,233 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                 Done Managing Curriculum
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: PDF Study Materials Manager (Teacher Upload & Manage) */}
+      {showMaterialModal && materialTargetLecture && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-xl w-full p-6 space-y-5 my-8 max-h-[90vh] overflow-y-auto relative animate-in fade-in">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-100">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 bg-amber-100 text-amber-800 font-bold text-[10px] uppercase rounded-md tracking-wider">
+                    Study Materials
+                  </span>
+                  <span className="text-xs text-slate-400 font-mono truncate max-w-xs">
+                    {materialTargetLecture.title}
+                  </span>
+                </div>
+                <h3 className="text-base font-extrabold text-slate-900">
+                  Lecture Study Materials & Notes
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Upload and attach PDF revision notes, cheatsheets, or exercise sheets for this lecture.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                disabled={isUploadingMaterial}
+                onClick={() => {
+                  setShowMaterialModal(false);
+                  setMaterialError("");
+                  setMaterialSuccess("");
+                }}
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Notifications */}
+            {materialError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-center gap-2 text-rose-700 text-xs">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{materialError}</span>
+              </div>
+            )}
+
+            {materialSuccess && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2 text-emerald-800 text-xs font-semibold">
+                <CheckCircle className="w-4 h-4 shrink-0 text-emerald-600" />
+                <span>{materialSuccess}</span>
+              </div>
+            )}
+
+            {/* Existing Materials List */}
+            <div className="space-y-2">
+              <div className="text-xs font-bold text-slate-800 flex items-center justify-between">
+                <span>Attached Materials ({materialTargetLecture.materials?.length || 0})</span>
+                <span className="text-[10px] text-slate-400 font-normal">Stored securely on Cloudinary</span>
+              </div>
+
+              {(!materialTargetLecture.materials || materialTargetLecture.materials.length === 0) ? (
+                <div className="p-4 bg-slate-50 border border-dashed border-slate-200 rounded-xl text-center text-xs text-slate-400">
+                  No PDF study materials attached to this lecture yet.
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                  {materialTargetLecture.materials.map((mat) => (
+                    <div
+                      key={mat.materialId}
+                      className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-xs hover:bg-slate-100/70 transition-colors"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                        <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-[10px] shrink-0">
+                          PDF
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-bold text-slate-800 truncate">
+                            {mat.title}
+                          </div>
+                          <div className="text-[10px] text-slate-400 truncate">
+                            {mat.fileName} • {mat.fileSizeMb} MB
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <a
+                          href={mat.secureUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-2 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-[11px] font-semibold rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                        >
+                          <Download className="w-3 h-3 text-slate-500" />
+                          <span>View</span>
+                        </a>
+                        <button
+                          type="button"
+                          disabled={isDeletingMaterialId === mat.materialId}
+                          onClick={() => handleDeleteMaterial(mat.materialId)}
+                          className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 border border-rose-200 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                          title="Delete PDF Material"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Upload New Material Form */}
+            <form onSubmit={handleUploadMaterialSubmit} className="space-y-4 pt-3 border-t border-slate-100 text-xs">
+              <div className="font-bold text-slate-800 text-xs">
+                Upload New PDF Study Material
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">
+                  Material Title (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={materialTitle}
+                  onChange={(e) => setMaterialTitle(e.target.value)}
+                  placeholder="e.g., Lecture Notes & Cheatsheet"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">
+                  Choose PDF File <span className="text-rose-500">*</span>
+                </label>
+                <label className="border-2 border-dashed border-slate-300 hover:border-amber-500 rounded-xl p-4 flex flex-col items-center justify-center text-center cursor-pointer bg-slate-50 hover:bg-amber-50/30 transition-colors">
+                  <input
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        setSelectedPdfFile(file);
+                        if (!materialTitle) {
+                          setMaterialTitle(file.name.replace(/\.pdf$/i, ""));
+                        }
+                      }
+                    }}
+                  />
+                  <FileText className="w-8 h-8 text-amber-500 mb-1" />
+                  {selectedPdfFile ? (
+                    <div>
+                      <div className="font-bold text-slate-800 truncate max-w-xs">
+                        {selectedPdfFile.name}
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        {(selectedPdfFile.size / (1024 * 1024)).toFixed(2)} MB • PDF Document
+                      </div>
+                      <span className="text-[10px] text-amber-600 font-semibold underline mt-1 inline-block">
+                        Click to change file
+                      </span>
+                    </div>
+                  ) : (
+                    <div>
+                      <span className="text-xs font-semibold text-slate-700">
+                        Click to select PDF document from your device
+                      </span>
+                      <p className="text-[10px] text-slate-400 mt-0.5">
+                        PDF format only, up to 25 MB
+                      </p>
+                    </div>
+                  )}
+                </label>
+              </div>
+
+              {/* Progress bar */}
+              {isUploadingMaterial && (
+                <div className="space-y-1.5 p-3 bg-amber-50/80 border border-amber-200 rounded-xl">
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-amber-900">
+                    <span>Uploading PDF to Cloudinary & saving metadata...</span>
+                    <span>{uploadMaterialProgress}%</span>
+                  </div>
+                  <div className="w-full bg-amber-200 h-2 rounded-full overflow-hidden">
+                    <div
+                      className="bg-amber-600 h-full rounded-full transition-all duration-300"
+                      style={{ width: `${uploadMaterialProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={isUploadingMaterial}
+                  onClick={() => {
+                    setShowMaterialModal(false);
+                    setMaterialError("");
+                    setMaterialSuccess("");
+                  }}
+                  className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 cursor-pointer disabled:opacity-50"
+                >
+                  Close
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUploadingMaterial || !selectedPdfFile}
+                  className="px-5 py-2 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-bold rounded-xl flex items-center gap-2 cursor-pointer shadow-xs transition-colors"
+                >
+                  {isUploadingMaterial ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Uploading PDF...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Upload & Attach Material</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -48,6 +48,12 @@ import {
   deleteCourseThumbnail,
 } from "./server/thumbnailService.js";
 import {
+  uploadLectureMaterial,
+  deleteLectureMaterial,
+  getAuthorizedMaterialAccess,
+  getLectureMaterials,
+} from "./server/materialService.js";
+import {
   requireAuth,
   requireRole,
   requireOwnerOrAdmin,
@@ -1028,6 +1034,134 @@ async function startServer() {
         return res.status(statusCode).json({
           success: false,
           message: err.message || "Failed to delete lecture.",
+        });
+      }
+    }
+  );
+
+  // =========================================================================
+  // COURSE PDF STUDY MATERIALS SYSTEM (Teacher Upload & Student Access)
+  // =========================================================================
+
+  // POST /api/courses/:courseId/sections/:sectionId/lectures/:lectureId/materials: Upload & attach PDF study material
+  app.post(
+    "/api/courses/:courseId/sections/:sectionId/lectures/:lectureId/materials",
+    requireAuth,
+    requireRole("teacher", "admin"),
+    async (req: any, res) => {
+      try {
+        const { courseId, sectionId, lectureId } = req.params;
+        const { title, fileName, fileData } = req.body;
+        const user = req.user;
+
+        const result = await uploadLectureMaterial({
+          courseId,
+          sectionId,
+          lectureId,
+          title,
+          fileName,
+          fileData,
+          userId: user.userId,
+          userRole: user.role,
+        });
+
+        return res.status(201).json(result);
+      } catch (err: any) {
+        console.error("[Material Upload API] Error:", err);
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({
+          success: false,
+          message: err.message || "Failed to upload study material.",
+        });
+      }
+    }
+  );
+
+  // DELETE /api/courses/:courseId/sections/:sectionId/lectures/:lectureId/materials/:materialId: Delete PDF study material
+  app.delete(
+    "/api/courses/:courseId/sections/:sectionId/lectures/:lectureId/materials/:materialId",
+    requireAuth,
+    requireRole("teacher", "admin"),
+    async (req: any, res) => {
+      try {
+        const { courseId, sectionId, lectureId, materialId } = req.params;
+        const user = req.user;
+
+        const result = await deleteLectureMaterial({
+          courseId,
+          sectionId,
+          lectureId,
+          materialId,
+          userId: user.userId,
+          userRole: user.role,
+        });
+
+        return res.status(200).json(result);
+      } catch (err: any) {
+        console.error("[Material Delete API] Error:", err);
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({
+          success: false,
+          message: err.message || "Failed to delete study material.",
+        });
+      }
+    }
+  );
+
+  // GET /api/courses/:courseId/sections/:sectionId/lectures/:lectureId/materials: List materials for lecture
+  app.get(
+    "/api/courses/:courseId/sections/:sectionId/lectures/:lectureId/materials",
+    requireAuth,
+    async (req: any, res) => {
+      try {
+        const { courseId, sectionId, lectureId } = req.params;
+        const user = req.user;
+
+        const result = await getLectureMaterials({
+          courseId,
+          sectionId,
+          lectureId,
+          userId: user.userId,
+          userRole: user.role,
+        });
+
+        return res.status(200).json(result);
+      } catch (err: any) {
+        console.error("[Material List API] Error:", err);
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({
+          success: false,
+          message: err.message || "Failed to fetch study materials.",
+        });
+      }
+    }
+  );
+
+  // GET /api/courses/:courseId/sections/:sectionId/lectures/:lectureId/materials/:materialId/access: Secure material download/view URL
+  app.get(
+    "/api/courses/:courseId/sections/:sectionId/lectures/:lectureId/materials/:materialId/access",
+    requireAuth,
+    async (req: any, res) => {
+      try {
+        const { courseId, sectionId, lectureId, materialId } = req.params;
+        const user = req.user;
+
+        const result = await getAuthorizedMaterialAccess({
+          courseId,
+          sectionId,
+          lectureId,
+          materialId,
+          userId: user.userId,
+          userRole: user.role,
+        });
+
+        return res.status(200).json(result);
+      } catch (err: any) {
+        console.error("[Material Access API] Error:", err);
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({
+          success: false,
+          message: err.message || "Failed to access study material.",
         });
       }
     }
