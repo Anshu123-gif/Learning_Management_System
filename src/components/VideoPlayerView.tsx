@@ -19,6 +19,7 @@ import {
   ChevronDown,
   ChevronUp,
   Download,
+  ExternalLink,
   ShieldCheck,
   Sparkles,
   AlertCircle,
@@ -244,6 +245,7 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
 
   // Material Access State
   const [accessingMaterialId, setAccessingMaterialId] = useState<string | null>(null);
+  const [materialActionType, setMaterialActionType] = useState<"view" | "download" | null>(null);
   const [materialAccessError, setMaterialAccessError] = useState<string | null>(null);
 
   // Dynamic Cloudinary Secure Stream Loading
@@ -2190,274 +2192,416 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
             )}
 
             {/* TAB 5: RESOURCES & STUDY MATERIALS */}
-            {activeTab === "resources" && (
-              <div className="space-y-6">
-                {/* 1. PDF STUDY MATERIALS / NOTES */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
+            {activeTab === "resources" && (() => {
+              // Deduplicate resources: filter out any resource entry that duplicates an attached PDF study material
+              const attachedMaterials = currentLecture.materials || [];
+              const rawResources = currentLecture.resources || [];
+              const nonDuplicateResources = rawResources.filter((res) => {
+                const normResTitle = (res.title || "").trim().toLowerCase();
+                const normResUrl = (res.url || "").trim().toLowerCase();
+                const isDuplicate = attachedMaterials.some((mat) => {
+                  const normMatTitle = (mat.title || "").trim().toLowerCase();
+                  const normMatFile = (mat.fileName || "").trim().toLowerCase();
+                  const normMatUrl = (mat.secureUrl || "").trim().toLowerCase();
+                  return (
+                    normResTitle === normMatTitle ||
+                    normResTitle === normMatFile ||
+                    normResTitle.replace(/\.pdf$/i, "") === normMatTitle.replace(/\.pdf$/i, "") ||
+                    normResTitle.replace(/\.pdf$/i, "") === normMatFile.replace(/\.pdf$/i, "") ||
+                    (normResUrl !== "#" && normResUrl !== "" && normResUrl === normMatUrl)
+                  );
+                });
+                return !isDuplicate;
+              });
+
+              return (
+                <div className="space-y-6">
+                  {/* Header Banner */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-800/40">
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 bg-amber-500/20 text-amber-400 font-bold text-[10px] uppercase rounded-md tracking-wider">
-                          Official Curriculum Materials
+                        <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-500">
+                          Course Materials
+                        </span>
+                        <span className="text-slate-500" aria-hidden="true">·</span>
+                        <span className={`text-[11px] ${isLight ? "text-slate-500" : "text-slate-400"}`}>
+                          Lecture {currentIndex + 1} of {allLectures.length}
                         </span>
                       </div>
                       <h3
-                        className={`text-sm font-bold mt-1 ${
+                        className={`text-base font-bold mt-0.5 tracking-tight ${
                           isLight ? "text-slate-900" : "text-white"
                         }`}
                       >
-                        PDF Study Materials & Reference Notes
+                        Study Materials & Resources
                       </h3>
-                      <p className={`text-[11px] ${isLight ? "text-slate-600" : "text-slate-400"}`}>
-                        Curated study materials uploaded by your instructor for "{currentLecture.title}".
+                      <p className={`text-xs mt-0.5 ${isLight ? "text-slate-600" : "text-slate-400"}`}>
+                        Official lecture notes, handouts, and reference materials for &ldquo;{currentLecture.title}&rdquo;
                       </p>
                     </div>
 
-                    <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-mono">
-                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                      <span className="hidden sm:inline text-[11px]">Enrolled Student Access</span>
+                    <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+                      <div
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border ${
+                          isLight
+                            ? "bg-emerald-50 text-emerald-800 border-emerald-200/80"
+                            : "bg-emerald-950/40 text-emerald-300 border-emerald-800/40"
+                        }`}
+                      >
+                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                        <span>Enrolled Student Access</span>
+                      </div>
                     </div>
                   </div>
 
                   {materialAccessError && (
-                    <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl flex items-center gap-2 text-rose-400 text-xs">
-                      <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
-                      <span>{materialAccessError}</span>
+                    <div
+                      role="alert"
+                      className="p-3.5 bg-rose-500/10 border border-rose-500/30 rounded-xl flex items-center justify-between gap-3 text-rose-400 text-xs animate-in fade-in duration-200"
+                    >
+                      <div className="flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
+                        <span>{materialAccessError}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setMaterialAccessError(null)}
+                        className="text-rose-400 hover:text-rose-200 text-xs font-semibold cursor-pointer underline"
+                      >
+                        Dismiss
+                      </button>
                     </div>
                   )}
 
-                  {currentLecture.materials && currentLecture.materials.length > 0 ? (
-                    <div className="space-y-2.5">
-                      {currentLecture.materials.map((mat) => {
-                        const isProcessing = accessingMaterialId === mat.materialId;
-                        return (
+                  {/* 1. OFFICIAL PDF STUDY MATERIALS */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-amber-500" />
+                        <h4
+                          className={`text-xs font-bold uppercase tracking-wider ${
+                            isLight ? "text-slate-800" : "text-slate-200"
+                          }`}
+                        >
+                          Lecture PDF Notes ({attachedMaterials.length})
+                        </h4>
+                      </div>
+                      <span className={`text-[11px] ${isLight ? "text-slate-500" : "text-slate-400"}`}>
+                        Read online or save offline
+                      </span>
+                    </div>
+
+                    {attachedMaterials.length > 0 ? (
+                      <div className="space-y-2.5">
+                        {attachedMaterials.map((mat) => {
+                          const isProcessingThis = accessingMaterialId === mat.materialId;
+                          const isViewingThis = isProcessingThis && materialActionType === "view";
+                          const isDownloadingThis = isProcessingThis && materialActionType === "download";
+
+                          return (
+                            <div
+                              key={mat.materialId}
+                              className={`rounded-xl p-4 border transition-all duration-150 flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+                                isLight
+                                  ? "bg-white border-slate-200/90 shadow-xs hover:border-amber-400/80 hover:shadow-sm"
+                                  : "bg-slate-900/90 border-slate-800 hover:border-amber-500/40"
+                              }`}
+                            >
+                              {/* Left file identity */}
+                              <div className="flex items-start sm:items-center gap-3.5 min-w-0">
+                                <div
+                                  className={`w-11 h-11 rounded-lg flex items-center justify-center shrink-0 border transition-colors ${
+                                    isLight
+                                      ? "bg-amber-50 text-amber-700 border-amber-200"
+                                      : "bg-amber-500/15 text-amber-400 border-amber-500/30"
+                                  }`}
+                                  aria-label="PDF Document"
+                                >
+                                  <FileText className="w-5 h-5" />
+                                </div>
+                                <div className="min-w-0 space-y-1">
+                                  <h5
+                                    className={`font-semibold text-sm leading-tight truncate ${
+                                      isLight ? "text-slate-900" : "text-white"
+                                    }`}
+                                    title={mat.title}
+                                  >
+                                    {mat.title}
+                                  </h5>
+                                  <div
+                                    className={`text-xs flex items-center flex-wrap gap-1.5 ${
+                                      isLight ? "text-slate-500" : "text-slate-400"
+                                    }`}
+                                  >
+                                    <span className="font-mono text-[11px] truncate max-w-[220px]" title={mat.fileName}>
+                                      {mat.fileName}
+                                    </span>
+                                    <span aria-hidden="true">·</span>
+                                    <span>{mat.fileSizeMb} MB</span>
+                                    <span aria-hidden="true">·</span>
+                                    <span className="text-amber-500 font-medium">PDF Document</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Right Action Buttons */}
+                              <div className="flex items-center gap-2.5 self-end sm:self-center shrink-0">
+                                {/* Action A: OPEN PDF IN BROWSER */}
+                                <button
+                                  type="button"
+                                  disabled={isProcessingThis}
+                                  onClick={async () => {
+                                    const matId = mat.materialId || (mat as any)._id || (mat as any).id;
+                                    setAccessingMaterialId(matId || "open");
+                                    setMaterialActionType("view");
+                                    setMaterialAccessError(null);
+                                    try {
+                                      let openUrl = "";
+                                      if (matId) {
+                                        const accessResult = await getLectureMaterialAccess(
+                                          activeCourse._id || (activeCourse as any).courseId,
+                                          currentSection?._id || (currentSection as any)?.sectionId || "",
+                                          currentLecture._id || (currentLecture as any)?.lectureId,
+                                          matId
+                                        );
+
+                                        if (accessResult.success && accessResult.viewUrl) {
+                                          openUrl = accessResult.viewUrl;
+                                        } else if (accessResult.downloadUrl) {
+                                          openUrl = accessResult.downloadUrl.replace(/\/fl_attachment(\/|,)?/g, "/");
+                                        }
+                                      }
+
+                                      if (!openUrl && mat.secureUrl) {
+                                        openUrl = mat.secureUrl.replace(/\/fl_attachment(\/|,)?/g, "/");
+                                      }
+
+                                      if (openUrl) {
+                                        // Ensure inline delivery so browser opens native PDF viewer tab
+                                        let finalViewUrl = openUrl
+                                          .replace(/\/fl_attachment(\/|,)?/g, (match: string, suffix: string) => (suffix === "/" ? "/" : ""))
+                                          .replace(/[?&]attachment=true/gi, "");
+                                        if (finalViewUrl.includes("res.cloudinary.com") && !finalViewUrl.includes("fl_inline") && !finalViewUrl.includes("download?")) {
+                                          finalViewUrl = finalViewUrl.replace(/\/upload\/(v\d+\/)?/, (match: string) => {
+                                            return match.includes("upload/v")
+                                              ? "/upload/fl_inline/" + match.replace("/upload/", "")
+                                              : "/upload/fl_inline/";
+                                          });
+                                        }
+                                        window.open(finalViewUrl, "_blank", "noopener,noreferrer");
+                                      } else {
+                                        throw new Error("Could not obtain viewing link for this document.");
+                                      }
+                                    } catch (err: any) {
+                                      console.warn("Failed to open material in browser:", err);
+                                      setMaterialAccessError(err.message || "Could not open study material in browser.");
+                                      if (mat.secureUrl) {
+                                        const fallback = mat.secureUrl.replace(/\/fl_attachment(\/|,)?/g, "/");
+                                        window.open(fallback, "_blank", "noopener,noreferrer");
+                                      }
+                                    } finally {
+                                      setAccessingMaterialId(null);
+                                      setMaterialActionType(null);
+                                    }
+                                  }}
+                                  title="View document in new browser tab"
+                                  className={`px-3.5 py-2 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-all cursor-pointer border ${
+                                    isLight
+                                      ? "bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-300"
+                                      : "bg-slate-800/90 hover:bg-slate-800 text-slate-200 border-slate-700 hover:border-slate-600"
+                                  } ${isViewingThis ? "opacity-75 cursor-wait" : ""}`}
+                                >
+                                  {isViewingThis ? (
+                                    <>
+                                      <div className="w-3.5 h-3.5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+                                      <span>Opening...</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <ExternalLink className="w-3.5 h-3.5 text-amber-500" />
+                                      <span>Open PDF</span>
+                                    </>
+                                  )}
+                                </button>
+
+                                {/* Action B: DOWNLOAD PDF TO DEVICE */}
+                                <button
+                                  type="button"
+                                  disabled={isProcessingThis}
+                                  onClick={async () => {
+                                    const matId = mat.materialId || (mat as any)._id || (mat as any).id;
+                                    setAccessingMaterialId(matId || "download");
+                                    setMaterialActionType("download");
+                                    setMaterialAccessError(null);
+                                    try {
+                                      let targetDownloadUrl = "";
+                                      if (matId) {
+                                        const accessResult = await getLectureMaterialAccess(
+                                          activeCourse._id || (activeCourse as any).courseId,
+                                          currentSection?._id || (currentSection as any)?.sectionId || "",
+                                          currentLecture._id || (currentLecture as any)?.lectureId,
+                                          matId
+                                        );
+
+                                        if (accessResult.success && accessResult.downloadUrl) {
+                                          targetDownloadUrl = accessResult.downloadUrl;
+                                        } else if (accessResult.viewUrl) {
+                                          targetDownloadUrl = accessResult.viewUrl;
+                                        }
+                                      }
+
+                                      if (!targetDownloadUrl && mat.secureUrl) {
+                                        targetDownloadUrl = mat.secureUrl;
+                                      }
+
+                                      if (targetDownloadUrl) {
+                                        // Ensure fl_attachment is present for Cloudinary delivery if direct
+                                        if (targetDownloadUrl.includes("res.cloudinary.com") && !targetDownloadUrl.includes("fl_attachment") && !targetDownloadUrl.includes("download?")) {
+                                          targetDownloadUrl = targetDownloadUrl.replace(/\/upload\/(fl_inline\/)?(v\d+\/)?/, (match: string) => {
+                                            const clean = match.replace("fl_inline/", "");
+                                            return clean.includes("upload/v")
+                                              ? "/upload/fl_attachment/" + clean.replace("/upload/", "")
+                                              : "/upload/fl_attachment/";
+                                          });
+                                        }
+
+                                        // Trigger explicit download
+                                        const downloadLink = document.createElement("a");
+                                        downloadLink.href = targetDownloadUrl;
+                                        downloadLink.target = "_blank";
+                                        downloadLink.download = mat.fileName || `${mat.title || "study_material"}.pdf`;
+                                        document.body.appendChild(downloadLink);
+                                        downloadLink.click();
+                                        document.body.removeChild(downloadLink);
+                                      } else {
+                                        throw new Error("Could not generate authenticated download link.");
+                                      }
+                                    } catch (err: any) {
+                                      console.error("Failed to download material:", err);
+                                      setMaterialAccessError(err.message || "Could not generate download link.");
+                                      if (mat.secureUrl) {
+                                        window.open(mat.secureUrl, "_blank", "noopener,noreferrer");
+                                      }
+                                    } finally {
+                                      setAccessingMaterialId(null);
+                                      setMaterialActionType(null);
+                                    }
+                                  }}
+                                  title="Download PDF to local storage"
+                                  className={`px-3.5 py-2 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all cursor-pointer shadow-xs ${
+                                    isDownloadingThis
+                                      ? "bg-amber-600/60 text-white cursor-wait"
+                                      : "bg-amber-600 hover:bg-amber-500 active:scale-98 text-white"
+                                  }`}
+                                >
+                                  {isDownloadingThis ? (
+                                    <>
+                                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                      <span>Downloading...</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Download className="w-3.5 h-3.5" />
+                                      <span>Download</span>
+                                    </>
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div
+                        className={`p-6 rounded-xl border text-center space-y-2 ${
+                          isLight
+                            ? "bg-slate-50/80 border-slate-200"
+                            : "bg-slate-900/40 border-slate-800"
+                        }`}
+                      >
+                        <FileText className="w-7 h-7 text-slate-400 mx-auto" />
+                        <p
+                          className={`text-xs font-medium ${
+                            isLight ? "text-slate-700" : "text-slate-300"
+                          }`}
+                        >
+                          No PDF study materials attached to this lecture yet.
+                        </p>
+                        <p className={`text-[11px] ${isLight ? "text-slate-500" : "text-slate-500"}`}>
+                          When the instructor uploads revision notes, cheatsheets, or exercise sheets, they will appear here.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 2. ADDITIONAL ASSETS (Zip files, source code repositories, datasets - duplicates filtered out) */}
+                  {nonDuplicateResources.length > 0 && (
+                    <div className="space-y-3 pt-4 border-t border-slate-800/60">
+                      <div className="flex items-center justify-between">
+                        <h4
+                          className={`text-xs font-bold uppercase tracking-wider ${
+                            isLight ? "text-slate-800" : "text-slate-200"
+                          }`}
+                        >
+                          Additional Assets & Source Files ({nonDuplicateResources.length})
+                        </h4>
+                        <span className={`text-[11px] ${isLight ? "text-slate-500" : "text-slate-400"}`}>
+                          Project archives & code attachments
+                        </span>
+                      </div>
+
+                      <div className="space-y-2">
+                        {nonDuplicateResources.map((res, i) => (
                           <div
-                            key={mat.materialId}
-                            className={`border rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs transition-colors ${
+                            key={i}
+                            className={`border rounded-xl p-3 flex items-center justify-between text-xs transition-colors ${
                               isLight
-                                ? "bg-white border-slate-200 shadow-2xs hover:border-amber-400"
-                                : "bg-slate-900 border-slate-800 hover:border-amber-500/40"
+                                ? "bg-white border-slate-200 shadow-2xs hover:border-slate-300"
+                                : "bg-slate-900 border-slate-800 hover:border-slate-700"
                             }`}
                           >
                             <div className="flex items-center gap-3 min-w-0">
-                              <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-500 flex items-center justify-center font-bold text-xs shrink-0 border border-amber-500/30 shadow-inner">
-                                <FileText className="w-5 h-5" />
+                              <div className="w-8 h-8 rounded-lg bg-indigo-500/15 text-indigo-400 flex items-center justify-center font-bold uppercase text-[10px] shrink-0 border border-indigo-500/20">
+                                {res.fileType || "FILE"}
                               </div>
                               <div className="min-w-0">
                                 <div
-                                  className={`font-bold truncate text-sm ${
+                                  className={`font-semibold truncate ${
                                     isLight ? "text-slate-900" : "text-white"
                                   }`}
                                 >
-                                  {mat.title}
+                                  {res.title}
                                 </div>
                                 <div
-                                  className={`text-[11px] flex items-center gap-2 mt-0.5 ${
+                                  className={`text-[10px] ${
                                     isLight ? "text-slate-500" : "text-slate-400"
                                   }`}
                                 >
-                                  <span className="font-mono">{mat.fileName}</span>
-                                  <span>•</span>
-                                  <span>{mat.fileSizeMb} MB</span>
-                                  <span>•</span>
-                                  <span className="text-amber-500 font-semibold">PDF Study Material</span>
+                                  {res.sizeMb} MB · Verified resource
                                 </div>
                               </div>
                             </div>
 
-                            <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-                              {/* Open/View in Browser */}
-                              <button
-                                type="button"
-                                disabled={isProcessing}
-                                onClick={async () => {
-                                  const matId = mat.materialId || (mat as any)._id || (mat as any).id;
-                                  if (!matId) {
-                                    if (mat.secureUrl) window.open(mat.secureUrl, "_blank");
-                                    return;
-                                  }
-                                  setAccessingMaterialId(matId);
-                                  setMaterialAccessError(null);
-                                  try {
-                                    const accessResult = await getLectureMaterialAccess(
-                                      activeCourse._id || (activeCourse as any).courseId,
-                                      currentSection?._id || (currentSection as any)?.sectionId || "",
-                                      currentLecture._id || (currentLecture as any)?.lectureId,
-                                      matId
-                                    );
-
-                                    if (accessResult.success && accessResult.viewUrl) {
-                                      window.open(accessResult.viewUrl, "_blank");
-                                    } else if (accessResult.downloadUrl) {
-                                      window.open(accessResult.downloadUrl, "_blank");
-                                    } else {
-                                      window.open(mat.secureUrl, "_blank");
-                                    }
-                                  } catch (err: any) {
-                                    console.warn("Failed to open material:", err);
-                                    setMaterialAccessError(err.message || "Could not open study material.");
-                                    if (mat.secureUrl) window.open(mat.secureUrl, "_blank");
-                                  } finally {
-                                    setAccessingMaterialId(null);
-                                  }
-                                }}
-                                className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border ${
-                                  isLight
-                                    ? "bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300"
-                                    : "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700"
-                                }`}
-                              >
-                                <FileText className="w-3.5 h-3.5 text-amber-500" />
-                                <span>Open PDF</span>
-                              </button>
-
-                              {/* Secure Authenticated Download */}
-                              <button
-                                type="button"
-                                disabled={isProcessing}
-                                onClick={async () => {
-                                  const matId = mat.materialId || (mat as any)._id || (mat as any).id;
-                                  if (!matId) {
-                                    if (mat.secureUrl) window.open(mat.secureUrl, "_blank");
-                                    return;
-                                  }
-                                  setAccessingMaterialId(matId);
-                                  setMaterialAccessError(null);
-                                  try {
-                                    const accessResult = await getLectureMaterialAccess(
-                                      activeCourse._id || (activeCourse as any).courseId,
-                                      currentSection?._id || (currentSection as any)?.sectionId || "",
-                                      currentLecture._id || (currentLecture as any)?.lectureId,
-                                      matId
-                                    );
-
-                                    if (accessResult.success && accessResult.downloadUrl) {
-                                      // Trigger browser download safely
-                                      const downloadLink = document.createElement("a");
-                                      downloadLink.href = accessResult.downloadUrl;
-                                      downloadLink.target = "_blank";
-                                      downloadLink.download = mat.fileName || "study_material.pdf";
-                                      document.body.appendChild(downloadLink);
-                                      downloadLink.click();
-                                      document.body.removeChild(downloadLink);
-                                    } else {
-                                      // Fallback to secureUrl directly
-                                      window.open(mat.secureUrl, "_blank");
-                                    }
-                                  } catch (err: any) {
-                                    console.error("Failed to download material:", err);
-                                    setMaterialAccessError(err.message || "Could not generate download link.");
-                                    window.open(mat.secureUrl, "_blank");
-                                  } finally {
-                                    setAccessingMaterialId(null);
-                                  }
-                                }}
-                                className={`px-3.5 py-1.5 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all cursor-pointer shadow-xs ${
-                                  isProcessing
-                                    ? "bg-amber-600/50 text-white cursor-wait"
-                                    : "bg-amber-600 hover:bg-amber-500 text-white"
-                                }`}
-                              >
-                                {isProcessing ? (
-                                  <>
-                                    <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                    <span>Preparing...</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Download className="w-3.5 h-3.5" />
-                                    <span>Download</span>
-                                  </>
-                                )}
-                              </button>
-                            </div>
+                            <a
+                              href={res.url || "#"}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className={`px-3 py-1.5 text-xs font-medium rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border ${
+                                isLight
+                                  ? "bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200"
+                                  : "bg-slate-800 hover:bg-slate-700 text-slate-200 border-transparent"
+                              }`}
+                            >
+                              <Download className="w-3.5 h-3.5" /> Download
+                            </a>
                           </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div
-                      className={`p-6 rounded-2xl border text-center space-y-2 ${
-                        isLight
-                          ? "bg-slate-50 border-slate-200"
-                          : "bg-slate-900/60 border-slate-800"
-                      }`}
-                    >
-                      <FileText className="w-8 h-8 text-slate-500 mx-auto" />
-                      <p
-                        className={`text-xs font-medium ${
-                          isLight ? "text-slate-600" : "text-slate-400"
-                        }`}
-                      >
-                        No PDF study materials attached to this lecture yet.
-                      </p>
-                      <p className="text-[11px] text-slate-500">
-                        When the instructor uploads revision notes, cheatsheets, or exercise sheets, they will appear here.
-                      </p>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>
-
-                {/* 2. GENERAL DOWNLOADABLE ASSETS / RESOURCES */}
-                {currentLecture.resources && currentLecture.resources.length > 0 && (
-                  <div className="space-y-3 pt-4 border-t border-slate-800/80">
-                    <h4
-                      className={`text-xs font-bold uppercase tracking-wider ${
-                        isLight ? "text-slate-700" : "text-slate-300"
-                      }`}
-                    >
-                      Additional Assets & Source Files ({currentLecture.resources.length})
-                    </h4>
-                    <div className="space-y-2">
-                      {currentLecture.resources.map((res, i) => (
-                        <div
-                          key={i}
-                          className={`border rounded-xl p-3 flex items-center justify-between text-xs ${
-                            isLight
-                              ? "bg-white border-slate-200 shadow-2xs"
-                              : "bg-slate-900 border-slate-800"
-                          }`}
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold uppercase text-[10px] shrink-0">
-                              {res.fileType}
-                            </div>
-                            <div className="min-w-0">
-                              <div
-                                className={`font-semibold truncate ${
-                                  isLight ? "text-slate-900" : "text-white"
-                                }`}
-                              >
-                                {res.title}
-                              </div>
-                              <div
-                                className={`text-[10px] ${
-                                  isLight ? "text-slate-500" : "text-slate-400"
-                                }`}
-                              >
-                                {res.sizeMb} MB • Verified file
-                              </div>
-                            </div>
-                          </div>
-                          <a
-                            href={res.url || "#"}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className={`px-3 py-1.5 text-xs font-medium rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border ${
-                              isLight
-                                ? "bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200"
-                                : "bg-slate-800 hover:bg-slate-700 text-slate-200 border-transparent"
-                            }`}
-                          >
-                            <Download className="w-3.5 h-3.5" /> Download
-                          </a>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+              );
+            })()}
 
             {/* TAB 6: PRACTICE */}
             {activeTab === "practice" && (

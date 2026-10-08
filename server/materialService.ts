@@ -207,7 +207,7 @@ export async function uploadLectureMaterial(input: UploadMaterialInput) {
       folder,
       public_id: `${materialId}_${sanitizedFileName.replace(/\.pdf$/i, "")}`,
       resource_type: "auto", // handles raw/image/pdf seamlessly
-      flags: "attachment",
+      flags: "inline", // default delivery is inline viewing; download is handled via signed fl_attachment delivery
     });
   } catch (uploadErr: any) {
     console.error("[MaterialService] Cloudinary PDF upload failed:", uploadErr);
@@ -215,6 +215,12 @@ export async function uploadLectureMaterial(input: UploadMaterialInput) {
     err.statusCode = 502;
     throw err;
   }
+
+  // Clean secure_url so it doesn't bake in fl_attachment
+  const cleanSecureUrl = (uploadResult.secure_url || "").replace(
+    /\/fl_attachment(\/|,)?/g,
+    (match: string, suffix: string) => (suffix === "/" ? "/" : "")
+  );
 
   // 7. Construct safe material metadata
   const newMaterial: LectureMaterial = {
@@ -227,7 +233,7 @@ export async function uploadLectureMaterial(input: UploadMaterialInput) {
     resourceType: uploadResult.resource_type || "image",
     deliveryType: uploadResult.type || "upload",
     format: uploadResult.format || "pdf",
-    secureUrl: uploadResult.secure_url,
+    secureUrl: cleanSecureUrl,
     uploadedBy: userId,
     createdAt: new Date().toISOString(),
   };
@@ -237,25 +243,6 @@ export async function uploadLectureMaterial(input: UploadMaterialInput) {
     targetLecture.materials = [];
   }
   targetLecture.materials.push(newMaterial);
-
-  // Also maintain backward-compatibility with existing lecture.resources array
-  if (!Array.isArray(targetLecture.resources)) {
-    targetLecture.resources = [];
-  }
-  const existingResourceIdx = targetLecture.resources.findIndex(
-    (r: any) => r.title === newMaterial.title
-  );
-  const resourceEntry = {
-    title: newMaterial.title,
-    url: newMaterial.secureUrl,
-    fileType: "pdf",
-    sizeMb: newMaterial.fileSizeMb,
-  };
-  if (existingResourceIdx >= 0) {
-    targetLecture.resources[existingResourceIdx] = resourceEntry;
-  } else {
-    targetLecture.resources.push(resourceEntry);
-  }
 
   course.updatedAt = new Date().toISOString();
   course.markModified("sections");
@@ -480,8 +467,9 @@ export async function getAuthorizedMaterialAccess(input: AccessMaterialInput) {
   }
 
   // Generate signed / authenticated delivery URLs
-  let downloadUrl = foundMaterial.secureUrl;
-  let viewUrl = foundMaterial.secureUrl;
+  let rawBaseUrl = foundMaterial.secureUrl || "";
+  let downloadUrl = rawBaseUrl;
+  let viewUrl = rawBaseUrl;
   const config = getCloudinaryConfig();
 
   if (foundMaterial.publicId && config.isConfigured) {
@@ -528,11 +516,40 @@ export async function getAuthorizedMaterialAccess(input: AccessMaterialInput) {
           resource_type: resourceType,
           secure: true,
           sign_url: true,
+          flags: "inline",
         });
       } catch {
-        downloadUrl = foundMaterial.secureUrl;
-        viewUrl = foundMaterial.secureUrl;
+        downloadUrl = rawBaseUrl;
+        viewUrl = rawBaseUrl;
       }
+    }
+  }
+
+  // Double-check URL sanitization for inline viewing vs forced attachment
+  if (viewUrl && typeof viewUrl === "string") {
+    // Strip any fl_attachment flags and attachment=true parameters
+    viewUrl = viewUrl.replace(/\/fl_attachment(\/|,)?/g, (match, suffix) => (suffix === "/" ? "/" : ""));
+    viewUrl = viewUrl.replace(/[?&]attachment=true/gi, "");
+    // Ensure inline flag is applied for direct Cloudinary delivery
+    if (viewUrl.includes("res.cloudinary.com") && !viewUrl.includes("fl_inline") && !viewUrl.includes("download?")) {
+      viewUrl = viewUrl.replace(/\/upload\/(v\d+\/)?/, (match) => {
+        return match.includes("upload/v")
+          ? "/upload/fl_inline/" + match.replace("/upload/", "")
+          : "/upload/fl_inline/";
+      });
+    }
+  }
+
+  if (downloadUrl && typeof downloadUrl === "string") {
+    // Strip fl_inline flag from download URL
+    downloadUrl = downloadUrl.replace(/\/fl_inline(\/|,)?/g, (match, suffix) => (suffix === "/" ? "/" : ""));
+    // Ensure fl_attachment is present for Cloudinary delivery
+    if (downloadUrl.includes("res.cloudinary.com") && !downloadUrl.includes("fl_attachment") && !downloadUrl.includes("download?")) {
+      downloadUrl = downloadUrl.replace(/\/upload\/(v\d+\/)?/, (match) => {
+        return match.includes("upload/v")
+          ? "/upload/fl_attachment/" + match.replace("/upload/", "")
+          : "/upload/fl_attachment/";
+      });
     }
   }
 
