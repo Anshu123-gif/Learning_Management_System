@@ -8,7 +8,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import Razorpay from "razorpay";
 import crypto from "crypto";
-import { connectMongoDB, isMongoConnected, getMongoDiagnostics } from "./server/db.js";
+import { connectMongoDB, isMongoConnected, getMongoDiagnostics, getMongoUri } from "./server/db.js";
 import { MongoUser } from "./server/models/User.js";
 import { MongoPayment } from "./server/models/Payment.js";
 import { MongoEnrollment } from "./server/models/Enrollment.js";
@@ -148,13 +148,22 @@ async function startServer() {
   });
 
   // Health check endpoint
-  app.get("/api/health", (req, res) => {
+  app.get("/api/health", async (req, res) => {
+    let isConnected = isMongoConnected();
+    if (!isConnected && getMongoUri()) {
+      try {
+        await connectMongoDB();
+        isConnected = isMongoConnected();
+      } catch {
+        // Ignore
+      }
+    }
     res.json({
       status: "online",
       service: "Sheryians MERN LMS Backend",
       version: "1.0.0",
-      mongoConnected: isMongoConnected(),
-      mongoConfigured: Boolean(process.env.MONGODB_URI),
+      mongoConnected: isConnected,
+      mongoConfigured: Boolean(getMongoUri()),
       aiConfigured: Boolean(process.env.GEMINI_API_KEY),
       diagnostics: getMongoDiagnostics(),
       timestamp: new Date().toISOString(),
@@ -634,10 +643,19 @@ async function startServer() {
   // -------------------------------------------------------------
 
   // Check MongoDB Connection Status
-  app.get("/api/mongo/status", (req, res) => {
+  app.get("/api/mongo/status", async (req, res) => {
+    let isConnected = isMongoConnected();
+    if (!isConnected && getMongoUri()) {
+      try {
+        await connectMongoDB();
+        isConnected = isMongoConnected();
+      } catch {
+        // Ignore
+      }
+    }
     res.json({
-      connected: isMongoConnected(),
-      configured: Boolean(process.env.MONGODB_URI),
+      connected: isConnected,
+      configured: Boolean(getMongoUri()),
       diagnostics: getMongoDiagnostics(),
     });
   });

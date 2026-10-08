@@ -50,8 +50,12 @@
       "destination": "/api/quizzes"
     },
     {
+      "source": "/api/mongo/status",
+      "destination": "/api/auth?path=mongo-status"
+    },
+    {
       "source": "/api/health",
-      "destination": "/api/auth?path=health"
+      "destination": "/api/health"
     },
     {
       "source": "/(.*)",

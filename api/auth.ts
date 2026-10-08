@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { connectMongoDB, isMongoConnected, getMongoDiagnostics } from "../server/db.js";
+import { connectMongoDB, isMongoConnected, getMongoDiagnostics, getMongoUri } from "../server/db.js";
 import { MongoUser } from "../server/models/User.js";
 import { getAllUsersForAdmin, updateUserRoleByAdmin } from "../server/userService.js";
 
@@ -63,10 +63,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     (pathCombined.includes("role") || queryPath === "role" || queryPath.endsWith("/role") || searchParams.includes("role")) &&
     (req.method === "PUT" || req.method === "PATCH");
 
+  const isMongoStatus =
+    pathCombined.includes("mongo/status") ||
+    pathCombined.includes("mongo-status") ||
+    queryPath.includes("mongo-status") ||
+    queryPath === "mongo/status" ||
+    queryPath.endsWith("mongo/status");
+
   const isHealth =
-    pathCombined.includes("health") ||
-    queryPath.includes("health") ||
-    (req.method === "GET" && !isMe && !isUsers);
+    !isMongoStatus &&
+    (pathCombined.includes("health") ||
+      queryPath.includes("health") ||
+      (req.method === "GET" && !isMe && !isUsers));
 
   // 1. SIGNUP: Validates name, email, password -> Checks existing email -> Hashes password with bcrypt -> Saves to MongoDB -> Returns JWT & user
   if (isSignup) {
@@ -488,8 +496,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
 
-  // 8. HEALTH CHECK
+  // 8. MONGO STATUS
+  if (isMongoStatus) {
+    if (!isMongoConnected() && getMongoUri()) {
+      try {
+        await connectMongoDB();
+      } catch {
+        // Diagnostics will capture connection state
+      }
+    }
+    return res.status(200).json({
+      connected: isMongoConnected(),
+      configured: Boolean(getMongoUri()),
+      diagnostics: getMongoDiagnostics(),
+    });
+  }
+
+  // 9. HEALTH CHECK
   if (isHealth) {
+    if (!isMongoConnected() && getMongoUri()) {
+      try {
+        await connectMongoDB();
+      } catch {
+        // Diagnostics will capture connection state
+      }
+    }
     return res.status(200).json({
       status: "online",
       service: "EduPulse / CodeHub LMS Vercel API",
