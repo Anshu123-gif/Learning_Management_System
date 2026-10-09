@@ -52,6 +52,7 @@ import {
   deleteLectureMaterial,
   getAuthorizedMaterialAccess,
   getLectureMaterials,
+  getAuthorizedMaterialStream,
 } from "./server/materialService.js";
 import {
   requireAuth,
@@ -1220,6 +1221,61 @@ async function startServer() {
           success: false,
           message: err.message || "Failed to access study material.",
         });
+      }
+    }
+  );
+
+  // GET /api/courses/:courseId/sections/:sectionId/lectures/:lectureId/materials/:materialId/:action(view|download)
+  // Streams authenticated PDF study materials inline (view) or as attachment (download)
+  app.get(
+    "/api/courses/:courseId/sections/:sectionId/lectures/:lectureId/materials/:materialId/:action",
+    async (req: any, res) => {
+      const { courseId, sectionId, lectureId, materialId, action } = req.params;
+      if (action !== "view" && action !== "download") {
+        return res.status(404).json({ success: false, message: "Invalid action." });
+      }
+
+      try {
+        const token =
+          (req.query.token as string) ||
+          (req.headers.authorization && req.headers.authorization.startsWith("Bearer ")
+            ? req.headers.authorization.split(" ")[1]
+            : undefined);
+
+        const streamResult = await getAuthorizedMaterialStream({
+          courseId,
+          sectionId,
+          lectureId,
+          materialId,
+          token,
+          authHeader: req.headers.authorization,
+          mode: action === "download" ? "download" : "view",
+          rangeHeader: req.headers.range,
+        });
+
+        res.status(streamResult.status);
+        for (const [key, value] of Object.entries(streamResult.headers)) {
+          res.setHeader(key, value);
+        }
+
+        if (req.method === "HEAD") {
+          return res.end();
+        }
+
+        if (streamResult.stream) {
+          streamResult.stream.pipe(res);
+        } else {
+          const buf = await streamResult.arrayBuffer();
+          res.send(buf);
+        }
+      } catch (err: any) {
+        const statusCode = err.statusCode || 500;
+        if (!res.headersSent) {
+          return res.status(statusCode).json({
+            success: false,
+            message: err.message || "Failed to retrieve study material.",
+          });
+        }
       }
     }
   );

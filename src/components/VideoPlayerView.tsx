@@ -2344,7 +2344,7 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                                 </div>
                               </div>
 
-                              {/* Right Action Buttons */}
+                                {/* Right Action Buttons */}
                               <div className="flex items-center gap-2.5 self-end sm:self-center shrink-0">
                                 {/* Action A: OPEN PDF IN BROWSER */}
                                 <button
@@ -2367,8 +2367,6 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
 
                                         if (accessResult.success && accessResult.viewUrl) {
                                           openUrl = accessResult.viewUrl;
-                                        } else if (accessResult.downloadUrl) {
-                                          openUrl = accessResult.downloadUrl.replace(/\/fl_attachment(\/|,)?/g, "/");
                                         }
                                       }
 
@@ -2377,11 +2375,12 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                                       }
 
                                       if (openUrl) {
-                                        // Ensure clean view URL without forced attachment so native browser PDF viewer renders it
-                                        const finalViewUrl = openUrl
-                                          .replace(/\/fl_attachment(\/|,)?/g, (match: string, suffix: string) => (suffix === "/" ? "/" : ""))
-                                          .replace(/\/fl_inline(\/|,)?/g, (match: string, suffix: string) => (suffix === "/" ? "/" : ""))
-                                          .replace(/[?&]attachment=[^&#]*/gi, "");
+                                        // Resolve full URL and ensure inline rendering
+                                        const finalViewUrl = openUrl.startsWith("/")
+                                          ? `${window.location.origin}${openUrl}`
+                                          : openUrl
+                                              .replace(/\/fl_attachment(\/|,)?/g, (match: string, suffix: string) => (suffix === "/" ? "/" : ""))
+                                              .replace(/[?&]attachment=[^&#]*/gi, "");
 
                                         window.open(finalViewUrl, "_blank", "noopener,noreferrer");
                                       } else {
@@ -2390,12 +2389,6 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                                     } catch (err: any) {
                                       console.warn("Failed to open material in browser:", err);
                                       setMaterialAccessError(err.message || "Could not open study material in browser.");
-                                      if (mat.secureUrl) {
-                                        const fallback = mat.secureUrl
-                                          .replace(/\/fl_attachment(\/|,)?/g, "/")
-                                          .replace(/\/fl_inline(\/|,)?/g, "/");
-                                        window.open(fallback, "_blank", "noopener,noreferrer");
-                                      }
                                     } finally {
                                       setAccessingMaterialId(null);
                                       setMaterialActionType(null);
@@ -2442,8 +2435,6 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
 
                                         if (accessResult.success && accessResult.downloadUrl) {
                                           targetDownloadUrl = accessResult.downloadUrl;
-                                        } else if (accessResult.viewUrl) {
-                                          targetDownloadUrl = accessResult.viewUrl;
                                         }
                                       }
 
@@ -2452,10 +2443,13 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                                       }
 
                                       if (targetDownloadUrl) {
+                                        let finalDownloadUrl = targetDownloadUrl.startsWith("/")
+                                          ? `${window.location.origin}${targetDownloadUrl}`
+                                          : targetDownloadUrl;
+
                                         // Ensure fl_attachment is present for Cloudinary delivery if direct
-                                        targetDownloadUrl = targetDownloadUrl.replace(/\/fl_inline(\/|,)?/g, (match: string, suffix: string) => (suffix === "/" ? "/" : ""));
-                                        if (targetDownloadUrl.includes("res.cloudinary.com") && !targetDownloadUrl.includes("fl_attachment") && !targetDownloadUrl.includes("download?")) {
-                                          targetDownloadUrl = targetDownloadUrl.replace(/\/upload\/(v\d+\/)?/, (match: string) => {
+                                        if (finalDownloadUrl.includes("res.cloudinary.com") && !finalDownloadUrl.includes("fl_attachment") && !finalDownloadUrl.includes("download?")) {
+                                          finalDownloadUrl = finalDownloadUrl.replace(/\/upload\/(v\d+\/)?/, (match: string) => {
                                             return match.includes("upload/v")
                                               ? "/upload/fl_attachment/" + match.replace("/upload/", "")
                                               : "/upload/fl_attachment/";
@@ -2464,7 +2458,7 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
 
                                         // Trigger explicit download
                                         const downloadLink = document.createElement("a");
-                                        downloadLink.href = targetDownloadUrl;
+                                        downloadLink.href = finalDownloadUrl;
                                         downloadLink.target = "_blank";
                                         downloadLink.download = mat.fileName || `${mat.title || "study_material"}.pdf`;
                                         document.body.appendChild(downloadLink);
@@ -2476,9 +2470,6 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                                     } catch (err: any) {
                                       console.error("Failed to download material:", err);
                                       setMaterialAccessError(err.message || "Could not generate download link.");
-                                      if (mat.secureUrl) {
-                                        window.open(mat.secureUrl, "_blank", "noopener,noreferrer");
-                                      }
                                     } finally {
                                       setAccessingMaterialId(null);
                                       setMaterialActionType(null);

@@ -18,6 +18,7 @@ import {
   deleteLectureMaterial,
   getAuthorizedMaterialAccess,
   getLectureMaterials,
+  getAuthorizedMaterialStream,
 } from "../server/materialService.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "sheryians_lms_super_secure_jwt_secret_key_2025";
@@ -861,6 +862,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           userRole: decoded.role,
         });
         return res.status(200).json(result);
+      }
+
+      // Check if streaming a study material: /api/courses/:courseId/sections/:sectionId/lectures/:lectureId/materials/:materialId/(view|download)
+      const materialStreamMatch = urlWithoutQuery.match(
+        /\/api\/courses\/([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)\/materials\/([^/]+)\/(view|download)/
+      );
+      if (materialStreamMatch) {
+        const [, cId, sId, lId, mId, action] = materialStreamMatch;
+        const token =
+          (req.query?.token as string) ||
+          (authHeader && authHeader.startsWith("Bearer ") ? authHeader.split(" ")[1] : undefined);
+
+        try {
+          const streamResult = await getAuthorizedMaterialStream({
+            courseId: cId,
+            sectionId: sId,
+            lectureId: lId,
+            materialId: mId,
+            token,
+            authHeader,
+            mode: action === "download" ? "download" : "view",
+            rangeHeader: req.headers?.range,
+          });
+
+          res.status(streamResult.status);
+          for (const [key, value] of Object.entries(streamResult.headers)) {
+            res.setHeader(key, value);
+          }
+
+          const buf = await streamResult.arrayBuffer();
+          return res.send(buf);
+        } catch (err: any) {
+          const statusCode = err.statusCode || 500;
+          return res.status(statusCode).json({
+            success: false,
+            message: err.message || "Failed to retrieve study material.",
+          });
+        }
       }
 
       // Check if listing lecture materials: /api/courses/:courseId/sections/:sectionId/lectures/:lectureId/materials

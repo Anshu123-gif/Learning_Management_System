@@ -1,8 +1,12 @@
 import mongoose from "mongoose";
+import { Readable } from "stream";
+import jwt from "jsonwebtoken";
 import { configureCloudinary, getCloudinaryConfig, cloudinary } from "./cloudinary.js";
 import { connectMongoDB } from "./db.js";
 import { MongoCourse } from "./models/Course.js";
 import { MongoEnrollment } from "./models/Enrollment.js";
+
+const JWT_SECRET = process.env.JWT_SECRET || "sheryians_lms_super_secure_jwt_secret_key_2025";
 
 // Allowed MIME types for Study Materials (PDF)
 export const ALLOWED_MATERIAL_MIME_TYPES = [
@@ -466,8 +470,8 @@ export async function getAuthorizedMaterialAccess(input: AccessMaterialInput) {
 
   // Generate signed / authenticated delivery URLs
   let rawBaseUrl = foundMaterial.secureUrl || "";
-  let downloadUrl = rawBaseUrl;
-  let viewUrl = rawBaseUrl;
+  let directDownloadUrl = rawBaseUrl;
+  let directViewUrl = rawBaseUrl;
   const config = getCloudinaryConfig();
 
   if (foundMaterial.publicId && config.isConfigured) {
@@ -475,19 +479,18 @@ export async function getAuthorizedMaterialAccess(input: AccessMaterialInput) {
     const resourceType = foundMaterial.resourceType || "image";
     const deliveryType = foundMaterial.deliveryType || "upload";
     const format = foundMaterial.format || "pdf";
-    const expiresAt = Math.floor(Date.now() / 1000) + 3600; // 1-hour expiration
 
     try {
-      // 1. Authenticated signed view URL: clean delivery without attachment flag so browser renders inline
-      viewUrl = cloudinary.url(`${foundMaterial.publicId}.${format}`, {
+      // Direct Cloudinary view URL (note: Cloudinary account setting may still enforce attachment)
+      directViewUrl = cloudinary.url(`${foundMaterial.publicId}.${format}`, {
         resource_type: resourceType,
         type: deliveryType,
         secure: true,
         sign_url: true,
       });
 
-      // 2. Authenticated signed download URL: uses flags: "attachment" to prompt save dialog
-      downloadUrl = cloudinary.url(`${foundMaterial.publicId}.${format}`, {
+      // Direct Cloudinary download URL: uses flags: "attachment" to prompt save dialog
+      directDownloadUrl = cloudinary.url(`${foundMaterial.publicId}.${format}`, {
         resource_type: resourceType,
         type: deliveryType,
         secure: true,
@@ -495,26 +498,23 @@ export async function getAuthorizedMaterialAccess(input: AccessMaterialInput) {
         flags: "attachment",
       });
     } catch {
-      downloadUrl = rawBaseUrl;
-      viewUrl = rawBaseUrl;
+      directDownloadUrl = rawBaseUrl;
+      directViewUrl = rawBaseUrl;
     }
   }
 
-  // Double-check URL sanitization for inline viewing vs forced attachment
-  if (viewUrl && typeof viewUrl === "string") {
-    // Strip any fl_attachment flags, fl_inline flags, and attachment query parameters
-    viewUrl = viewUrl
+  // Double-check direct URL sanitization
+  if (directViewUrl && typeof directViewUrl === "string") {
+    directViewUrl = directViewUrl
       .replace(/\/fl_attachment(\/|,)?/g, (match, suffix) => (suffix === "/" ? "/" : ""))
       .replace(/\/fl_inline(\/|,)?/g, (match, suffix) => (suffix === "/" ? "/" : ""))
       .replace(/[?&]attachment=[^&#]*/gi, "");
   }
 
-  if (downloadUrl && typeof downloadUrl === "string") {
-    // Strip any invalid fl_inline flags
-    downloadUrl = downloadUrl.replace(/\/fl_inline(\/|,)?/g, (match, suffix) => (suffix === "/" ? "/" : ""));
-    // Ensure fl_attachment is present for Cloudinary delivery if not already signed with fl_attachment
-    if (downloadUrl.includes("res.cloudinary.com") && !downloadUrl.includes("fl_attachment") && !downloadUrl.includes("download?")) {
-      downloadUrl = downloadUrl.replace(/\/upload\/(v\d+\/)?/, (match) => {
+  if (directDownloadUrl && typeof directDownloadUrl === "string") {
+    directDownloadUrl = directDownloadUrl.replace(/\/fl_inline(\/|,)?/g, (match, suffix) => (suffix === "/" ? "/" : ""));
+    if (directDownloadUrl.includes("res.cloudinary.com") && !directDownloadUrl.includes("fl_attachment") && !directDownloadUrl.includes("download?")) {
+      directDownloadUrl = directDownloadUrl.replace(/\/upload\/(v\d+\/)?/, (match) => {
         return match.includes("upload/v")
           ? "/upload/fl_attachment/" + match.replace("/upload/", "")
           : "/upload/fl_attachment/";
@@ -522,11 +522,286 @@ export async function getAuthorizedMaterialAccess(input: AccessMaterialInput) {
     }
   }
 
+  // Generate dedicated, tamper-proof backend tokens for inline viewing and file downloading
+  const viewToken = jwt.sign(
+    {
+      courseId,
+      sectionId: sectionId || "",
+      lectureId,
+      materialId,
+      userId,
+      userRole,
+      action: "view",
+      publicId: foundMaterial.publicId || "",
+      secureUrl: foundMaterial.secureUrl || "",
+      fileName: foundMaterial.fileName || foundMaterial.title || "study_material.pdf",
+    },
+    JWT_SECRET,
+    { expiresIn: "4h" }
+  );
+
+  const downloadToken = jwt.sign(
+    {
+      courseId,
+      sectionId: sectionId || "",
+      lectureId,
+      materialId,
+      userId,
+      userRole,
+      action: "download",
+      publicId: foundMaterial.publicId || "",
+      secureUrl: foundMaterial.secureUrl || "",
+      fileName: foundMaterial.fileName || foundMaterial.title || "study_material.pdf",
+    },
+    JWT_SECRET,
+    { expiresIn: "4h" }
+  );
+
+  const safeSecId = sectionId || "sec";
+  const backendViewUrl = `/api/courses/${encodeURIComponent(courseId)}/sections/${encodeURIComponent(safeSecId)}/lectures/${encodeURIComponent(lectureId)}/materials/${encodeURIComponent(materialId)}/view?token=${encodeURIComponent(viewToken)}`;
+  const backendDownloadUrl = `/api/courses/${encodeURIComponent(courseId)}/sections/${encodeURIComponent(safeSecId)}/lectures/${encodeURIComponent(lectureId)}/materials/${encodeURIComponent(materialId)}/download?token=${encodeURIComponent(downloadToken)}`;
+
   return {
     success: true,
     material: foundMaterial,
-    downloadUrl,
-    viewUrl,
+    // Dedicated backend view endpoint that streams PDF with Content-Disposition: inline
+    viewUrl: backendViewUrl,
+    // Dedicated backend download endpoint that streams PDF with Content-Disposition: attachment
+    downloadUrl: backendDownloadUrl,
+    // Direct Cloudinary URLs as secondary references
+    directViewUrl,
+    directDownloadUrl,
+  };
+}
+
+export interface StreamMaterialInput {
+  courseId: string;
+  sectionId?: string;
+  lectureId: string;
+  materialId: string;
+  token?: string;
+  authHeader?: string;
+  mode: "view" | "download";
+  rangeHeader?: string;
+}
+
+/**
+ * Streams an authenticated PDF study material from Cloudinary server-side.
+ * 
+ * Guarantees:
+ * 1. Strict authentication & course enrollment authorization.
+ * 2. For mode="view": Emits Content-Disposition: inline so the browser's native PDF viewer opens.
+ * 3. For mode="download": Emits Content-Disposition: attachment so the browser saves the file.
+ * 4. Content-Type: application/pdf is strictly preserved.
+ * 5. Supports HTTP Range requests and byte ranges for instant PDF page navigation.
+ * 6. Cloudinary API secrets are never exposed to the client.
+ */
+export async function getAuthorizedMaterialStream(input: StreamMaterialInput) {
+  const { courseId, lectureId, materialId, token, authHeader, mode, rangeHeader } = input;
+
+  if (!courseId || !lectureId || !materialId) {
+    const err: any = new Error("courseId, lectureId, and materialId are required.");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // 1. Authenticate token (from query param or Bearer header)
+  let jwtToken = token;
+  if (!jwtToken && authHeader && authHeader.startsWith("Bearer ")) {
+    jwtToken = authHeader.split(" ")[1];
+  }
+
+  if (!jwtToken) {
+    const err: any = new Error("Authentication required. Missing access token.");
+    err.statusCode = 401;
+    throw err;
+  }
+
+  let decoded: any;
+  try {
+    decoded = jwt.verify(jwtToken, JWT_SECRET);
+  } catch {
+    const err: any = new Error("Invalid or expired session token.");
+    err.statusCode = 401;
+    throw err;
+  }
+
+  const userId = decoded.userId;
+  const userRole = decoded.role || decoded.userRole;
+
+  if (!userId) {
+    const err: any = new Error("Invalid token payload: missing userId.");
+    err.statusCode = 401;
+    throw err;
+  }
+
+  // 2. Connect to database
+  const connected = await connectMongoDB();
+  let foundMaterial: LectureMaterial | null = null;
+
+  if (connected) {
+    // 3. Locate course
+    let course = await MongoCourse.findOne({ courseId }).lean();
+    if (!course && mongoose.Types.ObjectId.isValid(courseId)) {
+      course = await MongoCourse.findById(courseId).lean();
+    }
+
+    if (!course) {
+      const err: any = new Error(`Course with ID "${courseId}" not found.`);
+      err.statusCode = 404;
+      throw err;
+    }
+
+    // 4. Authorization check: Admin, Instructor owner, or enrolled student
+    const isAdmin = userRole === "admin";
+    const isInstructor = userRole === "teacher" && course.instructorId === userId;
+
+    if (!isAdmin && !isInstructor) {
+      const actualCourseId = course.courseId || courseId;
+      const enrollment = await MongoEnrollment.findOne({
+        studentId: userId,
+        courseId: actualCourseId,
+      }).lean();
+
+      if (!enrollment) {
+        const err: any = new Error(
+          "Access denied. You must be enrolled in this course to view its study materials."
+        );
+        err.statusCode = 403;
+        throw err;
+      }
+    }
+
+    // 5. Locate material in course sections
+    const sections = course.sections || [];
+    for (const sec of sections) {
+      for (const lec of sec.lectures || []) {
+        const lid = String(lec.lectureId || lec._id || lec.id || "");
+        if (lid === String(lectureId) || lid.toLowerCase() === String(lectureId).toLowerCase()) {
+          if (Array.isArray(lec.materials)) {
+            const mat = lec.materials.find(
+              (m: any) => String(m.materialId || m._id || m.id) === String(materialId)
+            );
+            if (mat) {
+              foundMaterial = mat;
+              break;
+            }
+          }
+        }
+      }
+      if (foundMaterial) break;
+    }
+  } else if (decoded.secureUrl || decoded.publicId) {
+    // Verified JWT token was already signed with JWT_SECRET after performing authorization checks
+    foundMaterial = {
+      materialId,
+      title: decoded.fileName || "Study Material",
+      fileName: decoded.fileName || "document.pdf",
+      fileSizeMb: 0,
+      fileType: "pdf",
+      publicId: decoded.publicId,
+      secureUrl: decoded.secureUrl,
+      createdAt: new Date().toISOString(),
+    };
+  } else {
+    const err: any = new Error("Database service unavailable.");
+    err.statusCode = 503;
+    throw err;
+  }
+
+  if (!foundMaterial) {
+    const err: any = new Error(`Study material "${materialId}" not found in this lecture.`);
+    err.statusCode = 404;
+    throw err;
+  }
+
+  // 6. Resolve Cloudinary storage delivery URL
+  let fetchUrl = foundMaterial.secureUrl || "";
+  const config = getCloudinaryConfig();
+  if (foundMaterial.publicId && config.isConfigured) {
+    configureCloudinary();
+    const resourceType = foundMaterial.resourceType || "image";
+    const deliveryType = foundMaterial.deliveryType || "upload";
+    const format = foundMaterial.format || "pdf";
+    fetchUrl = cloudinary.url(`${foundMaterial.publicId}.${format}`, {
+      resource_type: resourceType,
+      type: deliveryType,
+      secure: true,
+      sign_url: true,
+    });
+  }
+
+  if (!fetchUrl) {
+    const err: any = new Error("Storage URL not available for this study material.");
+    err.statusCode = 404;
+    throw err;
+  }
+
+  // Strip forced attachments from storage fetch URL so we receive raw stream
+  fetchUrl = fetchUrl
+    .replace(/\/fl_attachment(\/|,)?/g, (match, suffix) => (suffix === "/" ? "/" : ""))
+    .replace(/\/fl_inline(\/|,)?/g, (match, suffix) => (suffix === "/" ? "/" : ""))
+    .replace(/[?&]attachment=[^&#]*/gi, "");
+
+  // 7. Server-side fetch from storage with Range forwarding
+  const fetchHeaders: Record<string, string> = {};
+  if (rangeHeader) {
+    fetchHeaders["Range"] = rangeHeader;
+  }
+
+  const storageResponse = await fetch(fetchUrl, {
+    headers: fetchHeaders,
+  });
+
+  if (!storageResponse.ok && storageResponse.status !== 206) {
+    const err: any = new Error(
+      `Failed to retrieve document from cloud storage (${storageResponse.status}).`
+    );
+    err.statusCode = storageResponse.status >= 500 ? 502 : storageResponse.status;
+    throw err;
+  }
+
+  // 8. Prepare safe RFC 5987 / RFC 6266 Content-Disposition header
+  const rawFileName = (foundMaterial.fileName || foundMaterial.title || "document.pdf").trim();
+  const safeAsciiName =
+    rawFileName
+      .replace(/[/\\?%*:|"<>]/g, "_")
+      .replace(/[^\x20-\x7E]/g, "_") || "document.pdf";
+  const encodedName = encodeURIComponent(rawFileName);
+
+  const dispositionType = mode === "download" ? "attachment" : "inline";
+  const contentDisposition = `${dispositionType}; filename="${safeAsciiName}"; filename*=UTF-8''${encodedName}`;
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/pdf",
+    "Content-Disposition": contentDisposition,
+    "Accept-Ranges": "bytes",
+    "Cache-Control": "private, no-transform, max-age=3600",
+    "X-Content-Type-Options": "nosniff",
+  };
+
+  const contentLength = storageResponse.headers.get("content-length");
+  if (contentLength) {
+    headers["Content-Length"] = contentLength;
+  }
+
+  const contentRange = storageResponse.headers.get("content-range");
+  if (contentRange) {
+    headers["Content-Range"] = contentRange;
+  }
+
+  const rawBytes = Buffer.from(await storageResponse.arrayBuffer());
+  if (!headers["Content-Length"]) {
+    headers["Content-Length"] = String(rawBytes.length);
+  }
+
+  return {
+    status: storageResponse.status,
+    headers,
+    stream: Readable.from(rawBytes),
+    buffer: rawBytes,
+    arrayBuffer: async () => rawBytes,
+    material: foundMaterial,
   };
 }
 
