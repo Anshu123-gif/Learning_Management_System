@@ -2377,17 +2377,12 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                                       }
 
                                       if (openUrl) {
-                                        // Ensure inline delivery so browser opens native PDF viewer tab
-                                        let finalViewUrl = openUrl
+                                        // Ensure clean view URL without forced attachment so native browser PDF viewer renders it
+                                        const finalViewUrl = openUrl
                                           .replace(/\/fl_attachment(\/|,)?/g, (match: string, suffix: string) => (suffix === "/" ? "/" : ""))
-                                          .replace(/[?&]attachment=true/gi, "");
-                                        if (finalViewUrl.includes("res.cloudinary.com") && !finalViewUrl.includes("fl_inline") && !finalViewUrl.includes("download?")) {
-                                          finalViewUrl = finalViewUrl.replace(/\/upload\/(v\d+\/)?/, (match: string) => {
-                                            return match.includes("upload/v")
-                                              ? "/upload/fl_inline/" + match.replace("/upload/", "")
-                                              : "/upload/fl_inline/";
-                                          });
-                                        }
+                                          .replace(/\/fl_inline(\/|,)?/g, (match: string, suffix: string) => (suffix === "/" ? "/" : ""))
+                                          .replace(/[?&]attachment=[^&#]*/gi, "");
+
                                         window.open(finalViewUrl, "_blank", "noopener,noreferrer");
                                       } else {
                                         throw new Error("Could not obtain viewing link for this document.");
@@ -2396,7 +2391,9 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                                       console.warn("Failed to open material in browser:", err);
                                       setMaterialAccessError(err.message || "Could not open study material in browser.");
                                       if (mat.secureUrl) {
-                                        const fallback = mat.secureUrl.replace(/\/fl_attachment(\/|,)?/g, "/");
+                                        const fallback = mat.secureUrl
+                                          .replace(/\/fl_attachment(\/|,)?/g, "/")
+                                          .replace(/\/fl_inline(\/|,)?/g, "/");
                                         window.open(fallback, "_blank", "noopener,noreferrer");
                                       }
                                     } finally {
@@ -2456,11 +2453,11 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
 
                                       if (targetDownloadUrl) {
                                         // Ensure fl_attachment is present for Cloudinary delivery if direct
+                                        targetDownloadUrl = targetDownloadUrl.replace(/\/fl_inline(\/|,)?/g, (match: string, suffix: string) => (suffix === "/" ? "/" : ""));
                                         if (targetDownloadUrl.includes("res.cloudinary.com") && !targetDownloadUrl.includes("fl_attachment") && !targetDownloadUrl.includes("download?")) {
-                                          targetDownloadUrl = targetDownloadUrl.replace(/\/upload\/(fl_inline\/)?(v\d+\/)?/, (match: string) => {
-                                            const clean = match.replace("fl_inline/", "");
-                                            return clean.includes("upload/v")
-                                              ? "/upload/fl_attachment/" + clean.replace("/upload/", "")
+                                          targetDownloadUrl = targetDownloadUrl.replace(/\/upload\/(v\d+\/)?/, (match: string) => {
+                                            return match.includes("upload/v")
+                                              ? "/upload/fl_attachment/" + match.replace("/upload/", "")
                                               : "/upload/fl_attachment/";
                                           });
                                         }

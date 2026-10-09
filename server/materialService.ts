@@ -207,7 +207,6 @@ export async function uploadLectureMaterial(input: UploadMaterialInput) {
       folder,
       public_id: `${materialId}_${sanitizedFileName.replace(/\.pdf$/i, "")}`,
       resource_type: "auto", // handles raw/image/pdf seamlessly
-      flags: "inline", // default delivery is inline viewing; download is handled via signed fl_attachment delivery
     });
   } catch (uploadErr: any) {
     console.error("[MaterialService] Cloudinary PDF upload failed:", uploadErr);
@@ -216,11 +215,10 @@ export async function uploadLectureMaterial(input: UploadMaterialInput) {
     throw err;
   }
 
-  // Clean secure_url so it doesn't bake in fl_attachment
-  const cleanSecureUrl = (uploadResult.secure_url || "").replace(
-    /\/fl_attachment(\/|,)?/g,
-    (match: string, suffix: string) => (suffix === "/" ? "/" : "")
-  );
+  // Clean secure_url so it doesn't bake in fl_attachment or fl_inline
+  const cleanSecureUrl = (uploadResult.secure_url || "")
+    .replace(/\/fl_attachment(\/|,)?/g, (match: string, suffix: string) => (suffix === "/" ? "/" : ""))
+    .replace(/\/fl_inline(\/|,)?/g, (match: string, suffix: string) => (suffix === "/" ? "/" : ""));
 
   // 7. Construct safe material metadata
   const newMaterial: LectureMaterial = {
@@ -480,70 +478,41 @@ export async function getAuthorizedMaterialAccess(input: AccessMaterialInput) {
     const expiresAt = Math.floor(Date.now() / 1000) + 3600; // 1-hour expiration
 
     try {
-      // 1. Authenticated download URL via Cloudinary API with Content-Disposition: attachment
-      downloadUrl = cloudinary.utils.private_download_url(
-        foundMaterial.publicId,
-        format,
-        {
-          resource_type: resourceType,
-          type: deliveryType,
-          attachment: true,
-          expires_at: expiresAt,
-        }
-      );
+      // 1. Authenticated signed view URL: clean delivery without attachment flag so browser renders inline
+      viewUrl = cloudinary.url(`${foundMaterial.publicId}.${format}`, {
+        resource_type: resourceType,
+        type: deliveryType,
+        secure: true,
+        sign_url: true,
+      });
 
-      // 2. Authenticated view URL via Cloudinary API with Content-Disposition: inline
-      viewUrl = cloudinary.utils.private_download_url(
-        foundMaterial.publicId,
-        format,
-        {
-          resource_type: resourceType,
-          type: deliveryType,
-          attachment: false,
-          expires_at: expiresAt,
-        }
-      );
+      // 2. Authenticated signed download URL: uses flags: "attachment" to prompt save dialog
+      downloadUrl = cloudinary.url(`${foundMaterial.publicId}.${format}`, {
+        resource_type: resourceType,
+        type: deliveryType,
+        secure: true,
+        sign_url: true,
+        flags: "attachment",
+      });
     } catch {
-      // Fallback: signed delivery URL using API secret signature
-      try {
-        downloadUrl = cloudinary.url(`${foundMaterial.publicId}.${format}`, {
-          resource_type: resourceType,
-          secure: true,
-          sign_url: true,
-          flags: "attachment",
-        });
-        viewUrl = cloudinary.url(`${foundMaterial.publicId}.${format}`, {
-          resource_type: resourceType,
-          secure: true,
-          sign_url: true,
-          flags: "inline",
-        });
-      } catch {
-        downloadUrl = rawBaseUrl;
-        viewUrl = rawBaseUrl;
-      }
+      downloadUrl = rawBaseUrl;
+      viewUrl = rawBaseUrl;
     }
   }
 
   // Double-check URL sanitization for inline viewing vs forced attachment
   if (viewUrl && typeof viewUrl === "string") {
-    // Strip any fl_attachment flags and attachment=true parameters
-    viewUrl = viewUrl.replace(/\/fl_attachment(\/|,)?/g, (match, suffix) => (suffix === "/" ? "/" : ""));
-    viewUrl = viewUrl.replace(/[?&]attachment=true/gi, "");
-    // Ensure inline flag is applied for direct Cloudinary delivery
-    if (viewUrl.includes("res.cloudinary.com") && !viewUrl.includes("fl_inline") && !viewUrl.includes("download?")) {
-      viewUrl = viewUrl.replace(/\/upload\/(v\d+\/)?/, (match) => {
-        return match.includes("upload/v")
-          ? "/upload/fl_inline/" + match.replace("/upload/", "")
-          : "/upload/fl_inline/";
-      });
-    }
+    // Strip any fl_attachment flags, fl_inline flags, and attachment query parameters
+    viewUrl = viewUrl
+      .replace(/\/fl_attachment(\/|,)?/g, (match, suffix) => (suffix === "/" ? "/" : ""))
+      .replace(/\/fl_inline(\/|,)?/g, (match, suffix) => (suffix === "/" ? "/" : ""))
+      .replace(/[?&]attachment=[^&#]*/gi, "");
   }
 
   if (downloadUrl && typeof downloadUrl === "string") {
-    // Strip fl_inline flag from download URL
+    // Strip any invalid fl_inline flags
     downloadUrl = downloadUrl.replace(/\/fl_inline(\/|,)?/g, (match, suffix) => (suffix === "/" ? "/" : ""));
-    // Ensure fl_attachment is present for Cloudinary delivery
+    // Ensure fl_attachment is present for Cloudinary delivery if not already signed with fl_attachment
     if (downloadUrl.includes("res.cloudinary.com") && !downloadUrl.includes("fl_attachment") && !downloadUrl.includes("download?")) {
       downloadUrl = downloadUrl.replace(/\/upload\/(v\d+\/)?/, (match) => {
         return match.includes("upload/v")
