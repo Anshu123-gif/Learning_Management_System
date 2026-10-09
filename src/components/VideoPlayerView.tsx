@@ -2367,15 +2367,13 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
 
                                         if (accessResult.success && accessResult.viewUrl) {
                                           openUrl = accessResult.viewUrl;
+                                        } else {
+                                          throw new Error(accessResult.message || "Failed to obtain secure viewing link.");
                                         }
                                       }
 
-                                      if (!openUrl && mat.secureUrl) {
-                                        openUrl = mat.secureUrl.replace(/\/fl_attachment(\/|,)?/g, "/");
-                                      }
-
                                       if (openUrl) {
-                                        // Resolve full URL and ensure inline rendering
+                                        // Resolve full URL and ensure inline rendering in browser PDF viewer
                                         const finalViewUrl = openUrl.startsWith("/")
                                           ? `${window.location.origin}${openUrl}`
                                           : openUrl

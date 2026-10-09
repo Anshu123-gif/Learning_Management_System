@@ -816,6 +816,30 @@ export async function enrollFreeCourseInDb(
   };
 }
 
+function resolveRequestPaths(req: VercelRequest) {
+  let subPath = "";
+  if (req.query?.path) {
+    if (Array.isArray(req.query.path)) {
+      subPath = req.query.path.join("/");
+    } else {
+      subPath = String(req.query.path);
+    }
+  } else if (req.url) {
+    const cleanUrl = req.url.split("?")[0];
+    const match = cleanUrl.match(/\/api\/courses\/(.+)/);
+    if (match && match[1]) {
+      subPath = match[1];
+    }
+  }
+
+  // Construct normalized path like "/api/courses/courseId/sections/..."
+  const normalizedPath = subPath
+    ? `/api/courses/${subPath.replace(/^\/+/, "")}`
+    : (req.url || "").split("?")[0];
+
+  return { subPath, normalizedPath };
+}
+
 /**
  * Vercel Serverless Function Handler
  */
@@ -837,13 +861,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const myCourses = req.query?.myCourses as string;
       const status = req.query?.status as string;
 
-      const rawUrl = req.url || "";
-      const urlWithoutQuery = rawUrl.split("?")[0];
+      const { subPath, normalizedPath } = resolveRequestPaths(req);
 
       // Check if accessing a study material: /api/courses/:courseId/sections/:sectionId/lectures/:lectureId/materials/:materialId/access
-      const materialAccessMatch = urlWithoutQuery.match(
-        /\/api\/courses\/([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)\/materials\/([^/]+)\/access/
-      );
+      const materialAccessMatch =
+        normalizedPath.match(
+          /\/api\/courses\/([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)\/materials\/([^/]+)\/access\/?$/
+        ) ||
+        subPath.match(
+          /^([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)\/materials\/([^/]+)\/access\/?$/
+        );
+
       if (materialAccessMatch) {
         if (!authHeader || !authHeader.startsWith("Bearer ")) {
           return res.status(401).json({
@@ -865,9 +893,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // Check if streaming a study material: /api/courses/:courseId/sections/:sectionId/lectures/:lectureId/materials/:materialId/(view|download)
-      const materialStreamMatch = urlWithoutQuery.match(
-        /\/api\/courses\/([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)\/materials\/([^/]+)\/(view|download)/
-      );
+      const materialStreamMatch =
+        normalizedPath.match(
+          /\/api\/courses\/([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)\/materials\/([^/]+)\/(view|download)\/?$/
+        ) ||
+        subPath.match(
+          /^([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)\/materials\/([^/]+)\/(view|download)\/?$/
+        );
+
       if (materialStreamMatch) {
         const [, cId, sId, lId, mId, action] = materialStreamMatch;
         const token =
@@ -891,6 +924,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             res.setHeader(key, value);
           }
 
+          if ((req.method as string) === "HEAD") {
+            return res.status(streamResult.status).end();
+          }
+
           const buf = await streamResult.arrayBuffer();
           return res.send(buf);
         } catch (err: any) {
@@ -903,9 +940,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // Check if listing lecture materials: /api/courses/:courseId/sections/:sectionId/lectures/:lectureId/materials
-      const materialsListMatch = urlWithoutQuery.match(
-        /\/api\/courses\/([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)\/materials/
-      );
+      const materialsListMatch =
+        normalizedPath.match(
+          /\/api\/courses\/([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)\/materials\/?$/
+        ) ||
+        subPath.match(
+          /^([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)\/materials\/?$/
+        );
+
       if (materialsListMatch) {
         if (!authHeader || !authHeader.startsWith("Bearer ")) {
           return res.status(401).json({
@@ -927,10 +969,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // Check if querying a single course by id or path
       let singleId = (req.query?.courseId as string) || (req.query?.id as string) || "";
-      if (!singleId && req.query?.path) {
-        const pathVal = Array.isArray(req.query.path) ? req.query.path[0] : req.query.path;
-        if (pathVal && pathVal !== "all" && pathVal !== "myCourses") {
-          singleId = pathVal;
+      if (!singleId && subPath) {
+        if (!subPath.includes("/") && subPath !== "all" && subPath !== "myCourses" && subPath !== "upload-thumbnail") {
+          singleId = subPath;
         }
       }
 
@@ -1042,10 +1083,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
+      const { subPath, normalizedPath } = resolveRequestPaths(req);
+
       // Handle material upload: POST /api/courses/:courseId/sections/:sectionId/lectures/:lectureId/materials
-      const materialUploadMatch = (req.url || "").split("?")[0].match(
-        /\/api\/courses\/([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)\/materials/
-      );
+      const materialUploadMatch =
+        normalizedPath.match(
+          /\/api\/courses\/([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)\/materials\/?$/
+        ) ||
+        subPath.match(
+          /^([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)\/materials\/?$/
+        );
       if (materialUploadMatch) {
         const [, cId, sId, lId] = materialUploadMatch;
         const result = await uploadLectureMaterial({
@@ -1309,12 +1356,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
-      const urlWithoutQuery = (req.url || "").split("?")[0];
+      const { subPath, normalizedPath } = resolveRequestPaths(req);
 
       // Check if deleting a study material: /api/courses/:courseId/sections/:sectionId/lectures/:lectureId/materials/:materialId
-      const materialDeleteMatch = urlWithoutQuery.match(
-        /\/api\/courses\/([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)\/materials\/([^/]+)/
-      );
+      const materialDeleteMatch =
+        normalizedPath.match(
+          /\/api\/courses\/([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)\/materials\/([^/]+)\/?$/
+        ) ||
+        subPath.match(
+          /^([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)\/materials\/([^/]+)\/?$/
+        );
+
       if (materialDeleteMatch) {
         const [, cId, sId, lId, mId] = materialDeleteMatch;
         const result = await deleteLectureMaterial({
@@ -1329,9 +1381,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // Check if deleting a lecture: /api/courses/:courseId/sections/:sectionId/lectures/:lectureId
-      const lectureMatch = urlWithoutQuery.match(
-        /\/api\/courses\/([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)/
-      );
+      const lectureMatch =
+        normalizedPath.match(
+          /\/api\/courses\/([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)\/?$/
+        ) ||
+        subPath.match(
+          /^([^/]+)\/sections\/([^/]+)\/lectures\/([^/]+)\/?$/
+        );
       if (lectureMatch) {
         const [, cId, sId, lId] = lectureMatch;
         const result = await deleteLectureFromDb(cId, sId, lId, decoded.userId, decoded.role);
@@ -1339,7 +1395,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // Check if deleting a section: /api/courses/:courseId/sections/:sectionId
-      const sectionMatch = urlWithoutQuery.match(
+      const sectionMatch = normalizedPath.match(
         /\/api\/courses\/([^/]+)\/sections\/([^/]+)/
       );
       if (sectionMatch) {
@@ -1359,7 +1415,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       if (!courseId) {
-        const match = urlWithoutQuery.match(/\/api\/courses\/([^/]+)/);
+        const match = normalizedPath.match(/\/api\/courses\/([^/]+)/);
         if (match && match[1]) {
           courseId = match[1];
         }

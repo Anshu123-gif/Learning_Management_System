@@ -2679,7 +2679,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                           type="button"
                           onClick={async () => {
                             if (!materialTargetCourseId || !materialTargetSectionId || !materialTargetLecture) {
-                              window.open(mat.secureUrl, "_blank");
+                              if (mat.secureUrl) window.open(mat.secureUrl, "_blank", "noopener,noreferrer");
                               return;
                             }
                             try {
@@ -2690,14 +2690,17 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                                 mat.materialId
                               );
                               if (access.success && access.viewUrl) {
-                                window.open(access.viewUrl, "_blank");
-                              } else if (access.downloadUrl) {
-                                window.open(access.downloadUrl, "_blank");
-                              } else {
-                                window.open(mat.secureUrl, "_blank");
+                                const targetUrl = access.viewUrl.startsWith("/")
+                                  ? `${window.location.origin}${access.viewUrl}`
+                                  : access.viewUrl;
+                                window.open(targetUrl, "_blank", "noopener,noreferrer");
+                              } else if (mat.secureUrl) {
+                                window.open(mat.secureUrl, "_blank", "noopener,noreferrer");
                               }
                             } catch {
-                              window.open(mat.secureUrl, "_blank");
+                              if (mat.secureUrl) {
+                                window.open(mat.secureUrl, "_blank", "noopener,noreferrer");
+                              }
                             }
                           }}
                           className="px-2 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-[11px] font-semibold rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
