@@ -1332,8 +1332,8 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
               </span>
             </div>
 
-            {/* Lesson Title, Badge, Description & Quick Actions */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-0.5">
+            {/* Lesson Title, Badge, Description */}
+            <div className="pt-0.5">
               <div className="min-w-0 space-y-1">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 border border-purple-200 dark:border-purple-800/60">
@@ -1359,100 +1359,6 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                 <p className={`text-xs line-clamp-1 ${isLight ? "text-slate-500" : "text-slate-400"}`}>
                   {currentLecture.description || `Lecture ${currentIndex + 1} from ${currentSection?.title || "Curriculum"} · ${currentLecture.durationMinutes} mins`}
                 </p>
-              </div>
-
-              {/* Action Buttons: Notes, Bookmark, Fullscreen, Theme, Prev/Next */}
-              <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                {/* Notes shortcut */}
-                <button
-                  onClick={() => setActiveTab("notes")}
-                  title="Open lecture notes"
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer border ${
-                    activeTab === "notes"
-                      ? "bg-purple-600 text-white border-purple-600 shadow-sm"
-                      : isLight
-                      ? "bg-white hover:bg-slate-50 text-slate-700 border-slate-300 shadow-2xs hover:text-purple-600"
-                      : "bg-slate-800/90 hover:bg-slate-800 text-slate-200 border-slate-700 hover:text-purple-300"
-                  }`}
-                >
-                  <FileText className="w-3.5 h-3.5 text-purple-500" />
-                  <span className="hidden sm:inline">Notes</span>
-                </button>
-
-                {/* Bookmark action */}
-                <button
-                  onClick={toggleBookmark}
-                  title={isBookmarked ? "Remove bookmark" : "Bookmark this lesson"}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer border ${
-                    isBookmarked
-                      ? isLight
-                        ? "bg-amber-50 text-amber-800 border-amber-300 shadow-2xs"
-                        : "bg-amber-950/40 text-amber-300 border-amber-700/60"
-                      : isLight
-                      ? "bg-white hover:bg-slate-50 text-slate-700 border-slate-300 shadow-2xs hover:text-amber-600"
-                      : "bg-slate-800/90 hover:bg-slate-800 text-slate-200 border-slate-700 hover:text-amber-400"
-                  }`}
-                >
-                  <Bookmark className={`w-3.5 h-3.5 ${isBookmarked ? "fill-amber-500 text-amber-500" : "text-amber-500"}`} />
-                  <span className="hidden sm:inline">{isBookmarked ? "Saved" : "Bookmark"}</span>
-                </button>
-
-                {/* Fullscreen player shortcut */}
-                <button
-                  onClick={toggleFullscreen}
-                  title="Toggle Fullscreen Video"
-                  className={`p-2 rounded-xl text-xs font-semibold flex items-center justify-center transition-colors cursor-pointer border ${
-                    isLight
-                      ? "bg-white hover:bg-slate-50 text-slate-700 border-slate-300 shadow-2xs hover:text-purple-600"
-                      : "bg-slate-800/90 hover:bg-slate-800 text-slate-200 border-slate-700 hover:text-purple-400"
-                  }`}
-                >
-                  <Maximize className="w-3.5 h-3.5" />
-                </button>
-
-                {/* Sun / Moon Theme Toggle */}
-                <button
-                  onClick={toggleTheme}
-                  aria-label={isLight ? "Switch to dark mode" : "Switch to light mode"}
-                  title={isLight ? "Switch to dark mode" : "Switch to light mode"}
-                  className={`p-2 rounded-xl text-xs font-semibold flex items-center justify-center transition-colors cursor-pointer border ${
-                    isLight
-                      ? "bg-white hover:bg-slate-50 text-slate-700 border-slate-300 shadow-2xs"
-                      : "bg-slate-800/90 hover:bg-slate-800 text-slate-200 border-slate-700"
-                  }`}
-                >
-                  {isLight ? (
-                    <Moon className="w-3.5 h-3.5 text-slate-700" />
-                  ) : (
-                    <Sun className="w-3.5 h-3.5 text-amber-400" />
-                  )}
-                </button>
-
-                {/* Prev / Next controls */}
-                <div className="flex items-center gap-1 pl-1 border-l border-slate-200 dark:border-slate-800">
-                  <button
-                    onClick={goToPrev}
-                    disabled={!hasPrev}
-                    className={`px-3 py-1.5 rounded-xl disabled:opacity-30 disabled:pointer-events-none text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer border ${
-                      isLight
-                        ? "bg-white hover:bg-slate-50 text-slate-700 border-slate-300 shadow-2xs"
-                        : "bg-slate-800/90 hover:bg-slate-700 text-slate-200 border-slate-700/60"
-                    }`}
-                    title="Previous lesson"
-                  >
-                    <ChevronLeft className="w-3.5 h-3.5" />
-                    <span>Prev</span>
-                  </button>
-                  <button
-                    onClick={goToNext}
-                    disabled={!hasNext}
-                    className="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 disabled:opacity-30 disabled:pointer-events-none text-xs font-bold text-white flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
-                    title="Next lesson"
-                  >
-                    <span>Next</span>
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
               </div>
             </div>
           </div>
@@ -1572,6 +1478,42 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                       aria-label="Play video"
                     >
                       <Play className="w-7 h-7 fill-white ml-1" />
+                    </button>
+                  )}
+
+                  {/* Video Player In-Screen Previous Lesson Navigation (YouTube style) */}
+                  {hasPrev && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        goToPrev();
+                      }}
+                      className={`absolute left-3 sm:left-5 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-black/55 hover:bg-black/85 text-white/80 hover:text-white border border-white/15 backdrop-blur-md flex items-center justify-center shadow-xl transition-all duration-200 hover:scale-110 active:scale-95 z-20 cursor-pointer focus:outline-none focus:ring-2 focus:ring-purple-400 focus:opacity-100 ${
+                        showControls ? "opacity-90" : "opacity-0 group-hover:opacity-85 pointer-events-none group-hover:pointer-events-auto"
+                      }`}
+                      aria-label="Previous lesson"
+                      title="Previous lesson"
+                    >
+                      <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6 -ml-0.5" />
+                      <span className="sr-only">Previous lesson</span>
+                    </button>
+                  )}
+
+                  {/* Video Player In-Screen Next Lesson Navigation (YouTube style) */}
+                  {hasNext && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        goToNext();
+                      }}
+                      className={`absolute right-3 sm:right-5 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-black/55 hover:bg-black/85 text-white/80 hover:text-white border border-white/15 backdrop-blur-md flex items-center justify-center shadow-xl transition-all duration-200 hover:scale-110 active:scale-95 z-20 cursor-pointer focus:outline-none focus:ring-2 focus:ring-purple-400 focus:opacity-100 ${
+                        showControls ? "opacity-90" : "opacity-0 group-hover:opacity-85 pointer-events-none group-hover:pointer-events-auto"
+                      }`}
+                      aria-label="Next lesson"
+                      title="Next lesson"
+                    >
+                      <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6 ml-0.5" />
+                      <span className="sr-only">Next lesson</span>
                     </button>
                   )}
 
