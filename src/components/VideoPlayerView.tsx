@@ -314,11 +314,22 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
   const [streamError, setStreamError] = useState<string>("");
   const [streamSource, setStreamSource] = useState<string>("");
 
-  // Navigation helpers
-  const currentIndex = allLectures.findIndex((l) => l._id === currentLectureId);
+  // Navigation helpers - safely resolve active lecture and indices across sections
+  const effectiveLecture =
+    allLectures.find((l) => l._id === currentLectureId) || allLectures[0];
+  const activeLectureId = effectiveLecture?._id || currentLectureId;
+  const currentIndex = allLectures.findIndex((l) => l._id === activeLectureId);
   const hasNext = currentIndex >= 0 && currentIndex < allLectures.length - 1;
   const hasPrev = currentIndex > 0;
   const nextLecture = hasNext ? allLectures[currentIndex + 1] : null;
+  const prevLecture = hasPrev ? allLectures[currentIndex - 1] : null;
+
+  // Keep currentLectureId synchronized to a valid lecture in allLectures
+  useEffect(() => {
+    if (allLectures.length > 0 && (!currentLectureId || !allLectures.some((l) => l._id === currentLectureId))) {
+      setCurrentLectureId(allLectures[0]._id);
+    }
+  }, [allLectures, currentLectureId]);
 
   // Format seconds to mm:ss or hh:mm:ss
   const formatTime = (secs: number) => {
@@ -400,10 +411,10 @@ export const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
   }, [hasNext, nextLecture, switchLecture]);
 
   const goToPrev = useCallback(() => {
-    if (hasPrev) {
-      switchLecture(allLectures[currentIndex - 1]._id);
+    if (hasPrev && prevLecture) {
+      switchLecture(prevLecture._id);
     }
-  }, [hasPrev, allLectures, currentIndex, switchLecture]);
+  }, [hasPrev, prevLecture, switchLecture]);
 
   // Fetch authorized play URL for current lecture
   useEffect(() => {
@@ -1481,41 +1492,6 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                     </button>
                   )}
 
-                  {/* Video Player In-Screen Previous Lesson Navigation (YouTube style) */}
-                  {hasPrev && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        goToPrev();
-                      }}
-                      className={`absolute left-3 sm:left-5 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-black/55 hover:bg-black/85 text-white/80 hover:text-white border border-white/15 backdrop-blur-md flex items-center justify-center shadow-xl transition-all duration-200 hover:scale-110 active:scale-95 z-20 cursor-pointer focus:outline-none focus:ring-2 focus:ring-purple-400 focus:opacity-100 ${
-                        showControls ? "opacity-90" : "opacity-0 group-hover:opacity-85 pointer-events-none group-hover:pointer-events-auto"
-                      }`}
-                      aria-label="Previous lesson"
-                      title="Previous lesson"
-                    >
-                      <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6 -ml-0.5" />
-                      <span className="sr-only">Previous lesson</span>
-                    </button>
-                  )}
-
-                  {/* Video Player In-Screen Next Lesson Navigation (YouTube style) */}
-                  {hasNext && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        goToNext();
-                      }}
-                      className={`absolute right-3 sm:right-5 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-black/55 hover:bg-black/85 text-white/80 hover:text-white border border-white/15 backdrop-blur-md flex items-center justify-center shadow-xl transition-all duration-200 hover:scale-110 active:scale-95 z-20 cursor-pointer focus:outline-none focus:ring-2 focus:ring-purple-400 focus:opacity-100 ${
-                        showControls ? "opacity-90" : "opacity-0 group-hover:opacity-85 pointer-events-none group-hover:pointer-events-auto"
-                      }`}
-                      aria-label="Next lesson"
-                      title="Next lesson"
-                    >
-                      <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6 ml-0.5" />
-                      <span className="sr-only">Next lesson</span>
-                    </button>
-                  )}
 
                   {/* Up Next Prompt on Video End */}
                   {showUpNextPrompt && hasNext && nextLecture && (
@@ -1731,6 +1707,57 @@ export async function executeLessonSolution(params: { debug?: boolean } = {}) {
                   <Film className="w-8 h-8 mx-auto text-slate-500" />
                   <p className="text-xs">No video stream loaded.</p>
                 </div>
+              )}
+
+              {/* In-Video Lesson Navigation Overlay Controls (YouTube Style) */}
+              {allLectures.length > 1 && (
+                <>
+                  {/* Previous Lesson Button */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (hasPrev) {
+                        goToPrev();
+                      }
+                    }}
+                    disabled={!hasPrev}
+                    style={{ left: "12px", top: "50%", transform: "translateY(-50%)" }}
+                    className={`absolute z-30 w-10 h-10 sm:w-11 sm:h-11 rounded-full flex items-center justify-center shadow-xl transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-purple-400 ${
+                      hasPrev
+                        ? "bg-black/60 hover:bg-black/85 text-white/90 hover:text-white border border-white/20 backdrop-blur-md hover:scale-110 active:scale-95 cursor-pointer opacity-90 hover:opacity-100"
+                        : "bg-black/40 text-white/30 border border-white/10 opacity-30 cursor-not-allowed pointer-events-none"
+                    }`}
+                    aria-label="Previous lesson"
+                    title={hasPrev && prevLecture ? `Previous lesson: ${prevLecture.title}` : "Previous lesson"}
+                  >
+                    <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6 -ml-0.5" />
+                    <span className="sr-only">Previous lesson</span>
+                  </button>
+
+                  {/* Next Lesson Button */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (hasNext) {
+                        goToNext();
+                      }
+                    }}
+                    disabled={!hasNext}
+                    style={{ right: "12px", top: "50%", transform: "translateY(-50%)" }}
+                    className={`absolute z-30 w-10 h-10 sm:w-11 sm:h-11 rounded-full flex items-center justify-center shadow-xl transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-purple-400 ${
+                      hasNext
+                        ? "bg-black/60 hover:bg-black/85 text-white/90 hover:text-white border border-white/20 backdrop-blur-md hover:scale-110 active:scale-95 cursor-pointer opacity-90 hover:opacity-100"
+                        : "bg-black/40 text-white/30 border border-white/10 opacity-30 cursor-not-allowed pointer-events-none"
+                    }`}
+                    aria-label="Next lesson"
+                    title={hasNext && nextLecture ? `Next lesson: ${nextLecture.title}` : "Next lesson"}
+                  >
+                    <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6 ml-0.5" />
+                    <span className="sr-only">Next lesson</span>
+                  </button>
+                </>
               )}
             </div>
           </div>
